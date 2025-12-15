@@ -14,6 +14,7 @@ import {
   Clock,
   Hash
 } from "lucide-react"
+import { getAllTimezones } from "@/lib/timezones"
 
 interface Settings {
   mqtt: {
@@ -57,8 +58,14 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<Toast | null>(null)
   const [newTopic, setNewTopic] = useState("")
+  const [timezones, setTimezones] = useState<string[]>([])
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Load all IANA timezones
+  useEffect(() => {
+    setTimezones(getAllTimezones())
+  }, [])
 
   // Load settings
   async function loadSettings() {
@@ -262,7 +269,7 @@ export default function SettingsPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* MQTT Connection */}
-        <div className="bg-white rounded-xl border-2 border-slate-200 shadow-md p-6">
+        <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg p-6">
           <div className="flex items-center gap-2 mb-4">
             <Wifi className="w-5 h-5 text-emerald-600" />
             <h2 className="text-lg font-semibold text-slate-900">MQTT Connection</h2>
@@ -367,7 +374,7 @@ export default function SettingsPage() {
         </div>
 
         {/* TLS/SSL Settings */}
-        <div className="bg-white rounded-xl border-2 border-slate-200 shadow-md p-6">
+        <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg p-6">
           <div className="flex items-center gap-2 mb-4">
             {settings.mqtt.tlsEnabled ? (
               <Shield className="w-5 h-5 text-emerald-600" />
@@ -459,7 +466,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Topic Subscriptions */}
-        <div className="bg-white rounded-xl border-2 border-slate-200 shadow-md p-6">
+        <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg p-6">
           <div className="flex items-center gap-2 mb-4">
             <Hash className="w-5 h-5 text-emerald-600" />
             <h2 className="text-lg font-semibold text-slate-900">Topic Subscriptions</h2>
@@ -529,7 +536,7 @@ export default function SettingsPage() {
         </div>
 
         {/* System Settings */}
-        <div className="bg-white rounded-xl border-2 border-slate-200 shadow-md p-6">
+        <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg p-6">
           <div className="flex items-center gap-2 mb-4">
             <Clock className="w-5 h-5 text-emerald-600" />
             <h2 className="text-lg font-semibold text-slate-900">System Settings</h2>
@@ -548,12 +555,11 @@ export default function SettingsPage() {
                 } : null)}
                 className="w-full px-3 py-2 border-2 border-slate-200 rounded-lg focus:border-emerald-500 focus:outline-none"
               >
-                <option value="UTC">UTC</option>
-                <option value="Asia/Kuala_Lumpur">Asia/Kuala_Lumpur (MYT)</option>
-                <option value="Asia/Singapore">Asia/Singapore (SGT)</option>
-                <option value="Asia/Tokyo">Asia/Tokyo (JST)</option>
-                <option value="America/New_York">America/New_York (EST)</option>
-                <option value="Europe/London">Europe/London (GMT)</option>
+                {timezones.map((tz) => (
+                  <option key={tz} value={tz}>
+                    {tz}
+                  </option>
+                ))}
               </select>
             </div>
 

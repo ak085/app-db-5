@@ -57,17 +57,17 @@ export async function GET(request: NextRequest) {
       paramIndex++
     }
 
-    // Get total count
+    // Get total count (unique points only)
     const countSql = `
-      SELECT COUNT(*) as count FROM sensor_readings
+      SELECT COUNT(DISTINCT haystack_name) as count FROM sensor_readings
       WHERE ${timeFilter} ${haystackFilter}
     `
     const countResult = await queryTimescale<{ count: string }>(countSql, params)
     const totalCount = parseInt(countResult[0]?.count || '0')
 
-    // Get data
+    // Get data - latest value per unique point
     const dataSql = `
-      SELECT
+      SELECT DISTINCT ON (haystack_name)
         time,
         haystack_name,
         dis,
@@ -78,7 +78,7 @@ export async function GET(request: NextRequest) {
         quality
       FROM sensor_readings
       WHERE ${timeFilter} ${haystackFilter}
-      ORDER BY time DESC
+      ORDER BY haystack_name, time DESC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `
     params.push(limit, offset)

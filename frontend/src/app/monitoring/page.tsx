@@ -119,7 +119,7 @@ export default function MonitoringPage() {
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-xl border-2 border-slate-200 shadow-md p-4 mb-6">
+      <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg p-4 mb-6">
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-2">
             <Clock className="w-4 h-4 text-slate-500" />
@@ -178,7 +178,7 @@ export default function MonitoringPage() {
       </div>
 
       {/* Data Table */}
-      <div className="bg-white rounded-xl border-2 border-slate-200 shadow-md overflow-hidden">
+      <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>

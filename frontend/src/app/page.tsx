@@ -123,7 +123,7 @@ export default function Dashboard() {
       {/* Status Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
         {/* MQTT Connection Status */}
-        <div className="bg-white rounded-xl border-2 border-slate-200 shadow-md p-6">
+        <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-slate-500">MQTT Broker</h3>
             {mqttConnected ? (
@@ -144,7 +144,7 @@ export default function Dashboard() {
         </div>
 
         {/* TimescaleDB Status */}
-        <div className="bg-white rounded-xl border-2 border-slate-200 shadow-md p-6">
+        <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-slate-500">TimescaleDB</h3>
             <Database className={`w-5 h-5 ${data?.timescale.connected ? 'text-emerald-500' : 'text-red-500'}`} />
@@ -159,7 +159,7 @@ export default function Dashboard() {
         </div>
 
         {/* Total Readings */}
-        <div className="bg-white rounded-xl border-2 border-slate-200 shadow-md p-6">
+        <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-slate-500">Total Readings</h3>
             <BarChart3 className="w-5 h-5 text-blue-500" />
@@ -171,7 +171,7 @@ export default function Dashboard() {
         </div>
 
         {/* Today's Readings */}
-        <div className="bg-white rounded-xl border-2 border-slate-200 shadow-md p-6">
+        <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-slate-500">Today&apos;s Readings</h3>
             <Calendar className="w-5 h-5 text-purple-500" />
@@ -186,7 +186,7 @@ export default function Dashboard() {
       {/* Detail Cards */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* MQTT Configuration */}
-        <div className="bg-white rounded-xl border-2 border-slate-200 shadow-md p-6">
+        <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-slate-900">MQTT Configuration</h3>
             <Link
@@ -240,7 +240,7 @@ export default function Dashboard() {
         </div>
 
         {/* Topic Subscriptions */}
-        <div className="bg-white rounded-xl border-2 border-slate-200 shadow-md p-6">
+        <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-slate-900">Topic Subscriptions</h3>
             <Hash className="w-5 h-5 text-slate-400" />
@@ -276,7 +276,7 @@ export default function Dashboard() {
       </div>
 
       {/* Quick Actions */}
-      <div className="mt-6 bg-white rounded-xl border-2 border-slate-200 shadow-md p-6">
+      <div className="mt-6 bg-white rounded-xl border-2 border-slate-300 shadow-lg p-6">
         <h3 className="text-lg font-semibold text-slate-900 mb-4">Quick Actions</h3>
         <div className="flex flex-wrap gap-4">
           <Link

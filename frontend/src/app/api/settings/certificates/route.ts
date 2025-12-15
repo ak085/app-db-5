@@ -66,8 +66,13 @@ export async function POST(request: NextRequest) {
       await mkdir(CERTS_DIR, { recursive: true })
     }
 
-    // Save file
-    const filename = `${certType}_cert.pem`
+    // Preserve original file extension
+    const originalExt = path.extname(file.name).toLowerCase()
+    const validExtensions = ['.pem', '.crt', '.cer']
+    const extension = validExtensions.includes(originalExt) ? originalExt : '.pem'
+
+    // Save file with original extension
+    const filename = `${certType}_cert${extension}`
     const filePath = path.join(CERTS_DIR, filename)
     const bytes = await file.arrayBuffer()
     const buffer = Buffer.from(bytes)

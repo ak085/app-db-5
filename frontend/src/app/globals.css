@@ -121,7 +121,7 @@
 
 /* Enhanced borders and contrast */
 .card {
-  @apply border-2 border-border shadow-md;
+  @apply border-2 border-slate-300 shadow-lg;
 }
 
 .button {
