@@ -10,6 +10,7 @@
 - Username/password authentication
 - Configurable topic patterns
 - Web-based monitoring and export
+- Dynamic schema with JSONB metadata
 
 ---
 
@@ -22,13 +23,13 @@
 │  Frontend (Next.js 15) - Port 3002          │
 │  ├─ Dashboard (status)                      │
 │  ├─ Monitoring (data table)                 │
-│  └─ Settings (MQTT config)                  │
+│  └─ Settings (MQTT config + data mgmt)      │
 │                                             │
 │  PostgreSQL 15 - Port 5436                  │
 │  └─ Configuration database                  │
 │                                             │
 │  TimescaleDB 15 - Port 5435                 │
-│  └─ Time-series storage                     │
+│  └─ Time-series storage (JSONB schema)      │
 │                                             │
 │  Telegraf (Python)                          │
 │  └─ MQTT to TimescaleDB bridge              │
@@ -43,7 +44,7 @@
 
 ## Technology Stack
 
-- **Frontend**: Next.js 15 + TypeScript + Tailwind CSS
+- **Frontend**: Next.js 15 + TypeScript + Tailwind CSS + shadcn/ui
 - **Config Database**: PostgreSQL 15 + Prisma
 - **Time-Series Database**: TimescaleDB 15
 - **MQTT Bridge**: Python 3.10 + paho-mqtt
@@ -81,7 +82,7 @@ docker exec -it storage-timescaledb psql -U timescale -d sensor_data
 |------|---------|
 | `telegraf/mqtt_to_timescaledb.py` | MQTT subscription and TimescaleDB write |
 | `frontend/src/app/page.tsx` | Dashboard |
-| `frontend/src/app/settings/page.tsx` | MQTT/TLS configuration UI |
+| `frontend/src/app/settings/page.tsx` | MQTT/TLS config + data management |
 | `frontend/src/app/monitoring/page.tsx` | Data table view |
 | `frontend/src/app/api/export/route.ts` | CSV/JSON export |
 | `frontend/prisma/schema.prisma` | Config database schema |
@@ -101,17 +102,27 @@ docker exec -it storage-timescaledb psql -U timescale -d sensor_data
 - `enabled`, `connectionStatus`, `lastConnected`
 
 **SystemSettings**:
-- `timezone`, `retentionDays`
+- `retentionDays`
 
 ### Time-Series Database (TimescaleDB)
 
-**sensor_readings**:
-- `time` (timestamptz, partitioned)
-- `haystack_name`, `dis`
-- `device_id`, `device_name`, `device_ip`
+**sensor_readings** (Hybrid Schema):
+```sql
+time TIMESTAMPTZ NOT NULL,      -- Timestamp (indexed)
+haystack_name TEXT,             -- Point identifier (indexed)
+dis TEXT,                       -- Display name
+value DOUBLE PRECISION,         -- Measurement value
+units TEXT,                     -- Unit of measure
+quality TEXT,                   -- good/uncertain/bad
+metadata JSONB                  -- All other fields (dynamic)
+```
+
+**metadata JSONB** contains any additional fields from MQTT payload:
+- `device_id`, `device_ip`, `device_name`
 - `object_type`, `object_instance`
-- `value`, `units`, `quality`
 - `site_id`, `equipment_type`, `equipment_id`
+- `timezone` (if published by source)
+- Any other fields - schema adapts automatically
 
 ---
 
@@ -149,11 +160,29 @@ No container restart needed for config changes.
 
 ---
 
+## Dynamic Schema Benefits
+
+The JSONB metadata approach provides:
+- **No null columns** - only fields present in payload are stored
+- **Auto-adapting** - new fields captured automatically
+- **ML-ready** - timezone stored in metadata for local time analysis
+- **Queryable** - GIN index on metadata for efficient JSON queries
+
+Example query for local time:
+```sql
+SELECT
+  time AT TIME ZONE (metadata->>'timezone') as local_time,
+  haystack_name, value
+FROM sensor_readings;
+```
+
+---
+
 ## TimescaleDB Features
 
 - **Hypertable**: Auto-partitioned by time (1 day chunks)
 - **Compression**: Data older than 6 hours compressed
-- **Retention**: Data older than 30 days deleted
+- **Retention**: Data older than 30 days deleted (configurable)
 - **Continuous Aggregate**: 5-minute averages (sensor_readings_5min)
 
 ---
@@ -170,9 +199,9 @@ No container restart needed for config changes.
 
 ## Repository
 
-- **Gitea**: http://10.0.10.2:30008/ak101/app-storage.git
-- **Branch**: development
+- **Gitea**: http://10.0.10.2:30008/ak101/app-db3.git
+- **Branch**: main
 
 ---
 
-**Last Updated**: 2025-12-15
+**Last Updated**: 2025-12-16

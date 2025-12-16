@@ -12,7 +12,7 @@
 
 ```bash
 # Clone and deploy
-git clone http://10.0.10.2:30008/ak101/app-storage.git storage-app
+git clone http://10.0.10.2:30008/ak101/app-db3.git storage-app
 cd storage-app
 docker compose up -d
 
@@ -26,8 +26,8 @@ docker compose up -d
 
 Storage App is a standalone data collection gateway that:
 1. **Subscribes** to MQTT topics from any broker
-2. **Stores** time-series data in TimescaleDB
-3. **Provides** web GUI for configuration and monitoring
+2. **Stores** time-series data in TimescaleDB with dynamic JSONB schema
+3. **Provides** web GUI for configuration, monitoring, and data management
 4. **Exports** data in CSV or JSON format
 
 Perfect for collecting and storing data from BacPipes edge devices, IoT sensors, or any MQTT-based data source.
@@ -43,14 +43,14 @@ Perfect for collecting and storing data from BacPipes edge devices, IoT sensors,
 │  Frontend (Next.js) - Port 3002             │
 │  ├─ Dashboard (connection status)           │
 │  ├─ Monitoring (data table view)            │
-│  ├─ Settings (MQTT + TLS config)            │
+│  ├─ Settings (MQTT + TLS + data mgmt)       │
 │  └─ Export (CSV/JSON download)              │
 │                                             │
 │  PostgreSQL - Port 5436                     │
 │  └─ Configuration database                  │
 │                                             │
 │  TimescaleDB - Port 5435                    │
-│  └─ Time-series data storage                │
+│  └─ Time-series data (JSONB schema)         │
 │                                             │
 │  Telegraf (Python)                          │
 │  ├─ MQTT subscriber with TLS/Auth           │
@@ -74,10 +74,12 @@ Perfect for collecting and storing data from BacPipes edge devices, IoT sensors,
 | **TLS/SSL Support** | Secure connections with certificate verification |
 | **Authentication** | Username/password MQTT authentication |
 | **Topic Patterns** | Flexible wildcard topic subscriptions |
+| **Dynamic Schema** | JSONB metadata adapts to any payload structure |
 | **Data Monitoring** | Real-time data table with filtering |
-| **Data Export** | CSV and JSON download |
+| **Data Management** | Delete by points, time range, or all data |
+| **Data Export** | CSV and JSON download with dynamic columns |
 | **Auto Compression** | TimescaleDB compresses old data |
-| **Retention Policy** | Automatic data cleanup |
+| **Retention Policy** | Configurable automatic data cleanup |
 
 ---
 
@@ -122,6 +124,7 @@ All configuration is done via the web UI at `/settings`:
 - Topic subscription patterns
 - QoS level
 - Data retention period
+- Data deletion tools
 
 ### Via Environment Variables (Optional)
 
@@ -150,6 +153,23 @@ TZ=Asia/Kuala_Lumpur
 
 ## Data Storage
 
+### Dynamic JSONB Schema
+
+The storage uses a hybrid schema with core indexed columns and flexible JSONB metadata:
+
+```sql
+-- Core columns (indexed for fast queries)
+time, haystack_name, dis, value, units, quality
+
+-- Dynamic metadata (adapts to any payload)
+metadata JSONB  -- Contains: device_id, timezone, object_type, etc.
+```
+
+Benefits:
+- No null columns - only stores what's published
+- Auto-adapting - new fields captured automatically
+- ML-ready - timezone in metadata for local time analysis
+
 ### TimescaleDB Features
 
 - **Hypertable**: Automatic time-based partitioning
@@ -159,21 +179,24 @@ TZ=Asia/Kuala_Lumpur
 
 ### Export Formats
 
-**CSV Export:**
+**CSV Export** (dynamic columns based on metadata):
 ```csv
-time,haystack_name,display_name,value,units,device_id,...
-2025-12-15T10:30:00.000Z,klcc.ahu.12.sensor.temp,AHU-12 Temp,23.5,degC,221,...
+time,haystack_name,display_name,value,units,quality,device_id,timezone,...
+2025-12-16T10:30:00.000Z,klcc.ahu.12.sensor.temp,AHU-12 Temp,23.5,degC,good,12345,Asia/Kuala_Lumpur,...
 ```
 
-**JSON Export:**
+**JSON Export** (flattened with metadata):
 ```json
 [
   {
-    "time": "2025-12-15T10:30:00.000Z",
+    "time": "2025-12-16T10:30:00.000Z",
     "haystack_name": "klcc.ahu.12.sensor.temp",
     "dis": "AHU-12 Temp",
     "value": 23.5,
-    "units": "degC"
+    "units": "degC",
+    "quality": "good",
+    "device_id": 12345,
+    "timezone": "Asia/Kuala_Lumpur"
   }
 ]
 ```
@@ -208,6 +231,7 @@ storage-app/
 ├── docker-compose.yml          # All services
 ├── frontend/                   # Next.js web app
 │   ├── src/app/               # Pages and API routes
+│   ├── src/components/ui/     # shadcn/ui components
 │   ├── prisma/                # Database schema
 │   └── Dockerfile
 ├── telegraf/                   # MQTT to TimescaleDB
@@ -221,7 +245,7 @@ storage-app/
 
 ## Repository
 
-- **Gitea**: http://10.0.10.2:30008/ak101/app-storage.git
+- **Gitea**: http://10.0.10.2:30008/ak101/app-db3.git
 
 ---
 
