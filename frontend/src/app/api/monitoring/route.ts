@@ -9,9 +9,10 @@ interface SensorReading {
   dis: string
   value: number
   units: string
-  device_id: number
-  device_name: string
+  device_id: string | null
+  device_name: string | null
   quality: string
+  metadata?: Record<string, unknown>
 }
 
 export async function GET(request: NextRequest) {
@@ -66,6 +67,7 @@ export async function GET(request: NextRequest) {
     const totalCount = parseInt(countResult[0]?.count || '0')
 
     // Get data - latest value per unique point
+    // Extracts device info from JSONB metadata column
     const dataSql = `
       SELECT DISTINCT ON (haystack_name)
         time,
@@ -73,9 +75,10 @@ export async function GET(request: NextRequest) {
         dis,
         value,
         units,
-        device_id,
-        device_name,
-        quality
+        metadata->>'device_id' as device_id,
+        metadata->>'device_name' as device_name,
+        quality,
+        metadata
       FROM sensor_readings
       WHERE ${timeFilter} ${haystackFilter}
       ORDER BY haystack_name, time DESC

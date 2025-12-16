@@ -173,6 +173,156 @@ def connect_timescale_db():
         return False
 
 
+def ensure_schema_exists():
+    """Ensure the sensor_readings table and hypertable exist.
+
+    This handles cases where:
+    - Docker init scripts didn't run (container rebuild with existing volume)
+    - Database was recreated without init scripts
+    - Partial initialization occurred
+
+    Uses hybrid schema: core indexed columns + dynamic JSONB metadata
+    """
+    global timescale_conn
+
+    try:
+        cursor = timescale_conn.cursor()
+
+        # Check if table exists
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_schema = 'public'
+                AND table_name = 'sensor_readings'
+            );
+        """)
+        table_exists = cursor.fetchone()[0]
+
+        if table_exists:
+            # Check if metadata column exists (migration from old schema)
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.columns
+                    WHERE table_name = 'sensor_readings'
+                    AND column_name = 'metadata'
+                );
+            """)
+            has_metadata = cursor.fetchone()[0]
+
+            if has_metadata:
+                logger.info("sensor_readings table exists with metadata column")
+                cursor.close()
+                return True
+            else:
+                # Migrate old schema: add metadata column
+                # Must decompress chunks first for compressed hypertables
+                logger.info("Migrating schema: decompressing chunks and adding metadata column...")
+                try:
+                    # Decompress all chunks
+                    cursor.execute("""
+                        SELECT decompress_chunk(c.chunk_schema || '.' || c.chunk_name)
+                        FROM timescaledb_information.chunks c
+                        WHERE c.hypertable_name = 'sensor_readings'
+                        AND c.is_compressed = true;
+                    """)
+                    logger.info("Decompressed existing chunks")
+                except Exception as e:
+                    logger.info(f"No compressed chunks to decompress: {e}")
+
+                # Add column with NULL default (allowed on compressed hypertables)
+                cursor.execute("ALTER TABLE sensor_readings ADD COLUMN IF NOT EXISTS metadata JSONB;")
+
+                # Update existing rows to have empty JSON object
+                cursor.execute("UPDATE sensor_readings SET metadata = '{}'::jsonb WHERE metadata IS NULL;")
+
+                # Set default for new rows
+                cursor.execute("ALTER TABLE sensor_readings ALTER COLUMN metadata SET DEFAULT '{}'::jsonb;")
+
+                # Create index
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_sensor_metadata ON sensor_readings USING GIN (metadata);")
+
+                logger.info("Schema migration complete")
+                cursor.close()
+                return True
+
+        logger.warning("sensor_readings table not found - creating schema...")
+
+        # Create timescaledb extension
+        cursor.execute("CREATE EXTENSION IF NOT EXISTS timescaledb;")
+
+        # Create the table with hybrid schema
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sensor_readings (
+                time TIMESTAMPTZ NOT NULL,
+                haystack_name TEXT,
+                dis TEXT,
+                value DOUBLE PRECISION,
+                units TEXT,
+                quality TEXT CHECK (quality IN ('good', 'uncertain', 'bad')),
+                metadata JSONB DEFAULT '{}'::jsonb
+            );
+        """)
+
+        # Convert to hypertable
+        cursor.execute("""
+            SELECT create_hypertable(
+                'sensor_readings',
+                'time',
+                if_not_exists => TRUE,
+                chunk_time_interval => INTERVAL '1 day'
+            );
+        """)
+
+        # Create indexes
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sensor_haystack_time
+                ON sensor_readings (haystack_name, time DESC);
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sensor_time
+                ON sensor_readings (time DESC);
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sensor_metadata
+                ON sensor_readings USING GIN (metadata);
+        """)
+
+        # Enable compression
+        cursor.execute("""
+            ALTER TABLE sensor_readings SET (
+                timescaledb.compress,
+                timescaledb.compress_segmentby = 'haystack_name',
+                timescaledb.compress_orderby = 'time DESC'
+            );
+        """)
+
+        # Add compression policy
+        cursor.execute("""
+            SELECT add_compression_policy(
+                'sensor_readings',
+                INTERVAL '6 hours',
+                if_not_exists => TRUE
+            );
+        """)
+
+        # Add retention policy
+        cursor.execute("""
+            SELECT add_retention_policy(
+                'sensor_readings',
+                INTERVAL '30 days',
+                if_not_exists => TRUE
+            );
+        """)
+
+        cursor.close()
+        logger.info("Successfully created sensor_readings hypertable with indexes and policies")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to ensure schema exists: {e}")
+        return False
+
+
 def on_connect(client, userdata, flags, reason_code, properties):
     """Callback when connected to MQTT broker"""
     global mqtt_connected
@@ -210,8 +360,8 @@ def on_message(client, userdata, msg):
         # Parse JSON payload
         payload = json.loads(msg.payload.decode('utf-8'))
 
-        # Extract timestamp
-        timestamp = payload.get('timestamp')
+        # Extract timestamp (broker may use 'time' or 'timestamp')
+        timestamp = payload.get('timestamp') or payload.get('time')
         if timestamp:
             dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
         else:
@@ -229,26 +379,27 @@ def on_message(client, userdata, msg):
             for _ in range(100):
                 seen_messages.pop(next(iter(seen_messages)), None)
 
-        # Prepare data for insertion
+        # Core fields stored in dedicated columns (indexed for fast queries)
+        # These are excluded from metadata JSONB
+        core_fields = {'timestamp', 'time', 'haystackName', 'haystack_name', 'dis', 'value', 'units', 'quality'}
+
+        # Build metadata from all non-core fields that have values
+        metadata = {}
+        for key, value in payload.items():
+            if key not in core_fields and value is not None:
+                # Convert camelCase to snake_case for consistency
+                snake_key = ''.join(['_' + c.lower() if c.isupper() else c for c in key]).lstrip('_')
+                metadata[snake_key] = value
+
+        # Prepare data for insertion - only store what broker sends
         data = {
             'time': dt,
-            'site_id': payload.get('siteId'),
-            'equipment_type': payload.get('equipmentType'),
-            'equipment_id': payload.get('equipmentId'),
-            'device_id': payload.get('deviceId', 0),
-            'device_name': payload.get('deviceName'),
-            'device_ip': payload.get('deviceIp'),
-            'object_type': payload.get('objectType', 'unknown'),
-            'object_instance': payload.get('objectInstance', 0),
-            'point_id': payload.get('pointId'),
-            'point_name': payload.get('pointName'),
             'haystack_name': haystack_name,
             'dis': payload.get('dis'),
             'value': payload.get('value'),
             'units': payload.get('units'),
             'quality': payload.get('quality', 'good'),
-            'poll_duration': payload.get('pollDuration'),
-            'poll_cycle': payload.get('pollCycle')
+            'metadata': metadata  # All other fields as JSONB
         }
 
         # Insert into TimescaleDB
@@ -268,36 +419,40 @@ def on_message(client, userdata, msg):
 
 
 def insert_sensor_reading(data):
-    """Insert sensor reading into TimescaleDB"""
+    """Insert sensor reading into TimescaleDB with dynamic metadata"""
     global timescale_conn
 
     try:
         cursor = timescale_conn.cursor()
 
+        # Convert metadata dict to JSON string for PostgreSQL
+        metadata_json = json.dumps(data.get('metadata', {}))
+
         sql = """
         INSERT INTO sensor_readings (
-            time, site_id, equipment_type, equipment_id,
-            device_id, device_name, device_ip,
-            object_type, object_instance,
-            point_id, point_name, haystack_name, dis,
-            value, units, quality,
-            poll_duration, poll_cycle
+            time, haystack_name, dis, value, units, quality, metadata
         ) VALUES (
-            %(time)s, %(site_id)s, %(equipment_type)s, %(equipment_id)s,
-            %(device_id)s, %(device_name)s, %(device_ip)s,
-            %(object_type)s, %(object_instance)s,
-            %(point_id)s, %(point_name)s, %(haystack_name)s, %(dis)s,
-            %(value)s, %(units)s, %(quality)s,
-            %(poll_duration)s, %(poll_cycle)s
+            %(time)s, %(haystack_name)s, %(dis)s, %(value)s, %(units)s, %(quality)s, %(metadata)s::jsonb
         )
         """
 
-        cursor.execute(sql, data)
+        cursor.execute(sql, {
+            'time': data['time'],
+            'haystack_name': data.get('haystack_name'),
+            'dis': data.get('dis'),
+            'value': data.get('value'),
+            'units': data.get('units'),
+            'quality': data.get('quality', 'good'),
+            'metadata': metadata_json
+        })
         cursor.close()
 
     except Exception as e:
         logger.error(f"Database insert error: {e}")
-        connect_timescale_db()
+        stats['errors'] += 1
+        # Reconnect and ensure schema exists
+        if connect_timescale_db():
+            ensure_schema_exists()
 
 
 def connect_mqtt():
@@ -392,32 +547,79 @@ def main():
         logger.info("Waiting for TimescaleDB...")
         time.sleep(5)
 
+    # Ensure schema exists (handles cases where init scripts didn't run)
+    while not ensure_schema_exists():
+        logger.info("Waiting for schema to be ready...")
+        time.sleep(5)
+
     # Main loop - poll for config changes and maintain MQTT connection
     last_config_check = 0
     config_check_interval = 30  # Check config every 30 seconds
 
     while True:
+        global mqtt_connected
         current_time = time.time()
 
         # Check for config changes periodically
         if current_time - last_config_check > config_check_interval:
             last_config_check = current_time
 
-            # Reload config
+            # Save old config values before reload
             old_broker = mqtt_config['broker']
             old_port = mqtt_config['port']
             old_tls = mqtt_config['tls_enabled']
+            old_tls_insecure = mqtt_config['tls_insecure']
+            old_ca_cert = mqtt_config['ca_cert_path']
+            old_username = mqtt_config['username']
+            old_password = mqtt_config['password']
+            old_topics = mqtt_config['topic_patterns'].copy() if mqtt_config['topic_patterns'] else []
+            old_qos = mqtt_config['qos']
+            old_enabled = mqtt_config['enabled']
 
             load_mqtt_config()
 
-            # Check if config changed
+            # Check if any connection-related config changed
             config_changed = (
                 old_broker != mqtt_config['broker'] or
                 old_port != mqtt_config['port'] or
-                old_tls != mqtt_config['tls_enabled']
+                old_tls != mqtt_config['tls_enabled'] or
+                old_tls_insecure != mqtt_config['tls_insecure'] or
+                old_ca_cert != mqtt_config['ca_cert_path'] or
+                old_username != mqtt_config['username'] or
+                old_password != mqtt_config['password'] or
+                old_topics != mqtt_config['topic_patterns'] or
+                old_qos != mqtt_config['qos']
             )
 
-            if config_changed and mqtt_client:
+            # Handle enabled/disabled toggle
+            enabled_changed = old_enabled != mqtt_config['enabled']
+
+            if enabled_changed:
+                if not mqtt_config['enabled'] and mqtt_client:
+                    logger.info("MQTT disabled, disconnecting...")
+                    mqtt_client.disconnect()
+                    mqtt_client.loop_stop()
+                    mqtt_connected = False
+                    update_connection_status('disconnected')
+                elif mqtt_config['enabled'] and not mqtt_connected:
+                    logger.info("MQTT enabled, connecting...")
+                    connect_mqtt()
+
+            elif config_changed and mqtt_client and mqtt_connected:
+                # Log what changed for debugging
+                if old_topics != mqtt_config['topic_patterns']:
+                    logger.info(f"Topic patterns changed: {old_topics} -> {mqtt_config['topic_patterns']}")
+                if old_broker != mqtt_config['broker']:
+                    logger.info(f"Broker changed: {old_broker} -> {mqtt_config['broker']}")
+                if old_port != mqtt_config['port']:
+                    logger.info(f"Port changed: {old_port} -> {mqtt_config['port']}")
+                if old_tls != mqtt_config['tls_enabled']:
+                    logger.info(f"TLS changed: {old_tls} -> {mqtt_config['tls_enabled']}")
+                if old_username != mqtt_config['username']:
+                    logger.info(f"Username changed")
+                if old_qos != mqtt_config['qos']:
+                    logger.info(f"QoS changed: {old_qos} -> {mqtt_config['qos']}")
+
                 logger.info("MQTT config changed, reconnecting...")
                 mqtt_client.disconnect()
                 mqtt_client.loop_stop()

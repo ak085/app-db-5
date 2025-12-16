@@ -52,7 +52,6 @@ model SystemSettings {
   id                Int       @id @default(1)
 
   // System
-  timezone          String    @default("Asia/Kuala_Lumpur")
   retentionDays     Int       @default(30)
 
   // Timestamps

@@ -11,10 +11,28 @@ import {
   Trash2,
   Plus,
   X,
-  Clock,
-  Hash
+  Hash,
+  Database,
+  AlertTriangle
 } from "lucide-react"
-import { getAllTimezones } from "@/lib/timezones"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
+import { Button } from "@/components/ui/button"
+import { Separator } from "@/components/ui/separator"
+import { Badge } from "@/components/ui/badge"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  Alert,
+  AlertDescription,
+} from "@/components/ui/alert"
 
 interface Settings {
   mqtt: {
@@ -33,7 +51,6 @@ interface Settings {
     connectionStatus: string
   }
   system: {
-    timezone: string
     retentionDays: number
   }
 }
@@ -51,6 +68,13 @@ interface Toast {
   type: "success" | "error"
 }
 
+interface DataPoint {
+  name: string
+  count: number
+  firstTime: string
+  lastTime: string
+}
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [initialSettings, setInitialSettings] = useState<Settings | null>(null)
@@ -59,18 +83,21 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<Toast | null>(null)
   const [newTopic, setNewTopic] = useState("")
-  const [timezones, setTimezones] = useState<string[]>([])
+
+  // Data Management state
+  const [dataPoints, setDataPoints] = useState<DataPoint[]>([])
+  const [selectedPoints, setSelectedPoints] = useState<string[]>([])
+  const [deleteFromDate, setDeleteFromDate] = useState("")
+  const [deleteToDate, setDeleteToDate] = useState("")
+  const [deleteAllConfirm, setDeleteAllConfirm] = useState("")
+  const [deletePreviewCount, setDeletePreviewCount] = useState<number | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Check if there are unsaved changes
   const hasUnsavedChanges = settings && initialSettings &&
     JSON.stringify(settings) !== JSON.stringify(initialSettings)
-
-  // Load all IANA timezones
-  useEffect(() => {
-    setTimezones(getAllTimezones())
-  }, [])
 
   // Load settings
   async function loadSettings() {
@@ -79,7 +106,7 @@ export default function SettingsPage() {
       if (!response.ok) throw new Error('Failed to load settings')
       const data = await response.json()
       setSettings(data)
-      setInitialSettings(JSON.parse(JSON.stringify(data))) // Deep copy for comparison
+      setInitialSettings(JSON.parse(JSON.stringify(data)))
     } catch (error) {
       setToast({
         message: error instanceof Error ? error.message : 'Failed to load settings',
@@ -121,7 +148,7 @@ export default function SettingsPage() {
 
       if (!response.ok) throw new Error('Failed to save settings')
 
-      setInitialSettings(JSON.parse(JSON.stringify(settings))) // Update baseline after save
+      setInitialSettings(JSON.parse(JSON.stringify(settings)))
       setToast({ message: 'Settings saved successfully', type: 'success' })
     } catch (error) {
       setToast({
@@ -152,7 +179,6 @@ export default function SettingsPage() {
       setToast({ message: 'Certificate uploaded successfully', type: 'success' })
       await loadCertificateStatus()
 
-      // Update certificate path in settings
       if (data.path && settings) {
         setSettings(prev => prev ? {
           ...prev,
@@ -179,7 +205,6 @@ export default function SettingsPage() {
       setToast({ message: 'Certificate deleted successfully', type: 'success' })
       await loadCertificateStatus()
 
-      // Clear certificate path in settings
       if (settings) {
         setSettings(prev => prev ? {
           ...prev,
@@ -229,12 +254,96 @@ export default function SettingsPage() {
     }
   }, [toast])
 
+  // Load data points for deletion selection
+  async function loadDataPoints() {
+    try {
+      const response = await fetch('/api/data/points')
+      if (!response.ok) throw new Error('Failed to load points')
+      const data = await response.json()
+      setDataPoints(data.points || [])
+    } catch (error) {
+      console.error('Failed to load data points:', error)
+    }
+  }
+
+  useEffect(() => {
+    loadDataPoints()
+  }, [])
+
+  // Preview delete count
+  async function previewDelete(type: 'points' | 'time_range' | 'all') {
+    try {
+      let url = '/api/data/delete?type=' + type
+      if (type === 'points' && selectedPoints.length > 0) {
+        url += '&haystack_names=' + selectedPoints.join(',')
+      } else if (type === 'time_range' && deleteFromDate && deleteToDate) {
+        url += `&from=${deleteFromDate}&to=${deleteToDate}`
+      }
+
+      const response = await fetch(url)
+      if (!response.ok) throw new Error('Failed to preview')
+      const data = await response.json()
+      setDeletePreviewCount(data.count)
+    } catch (error) {
+      console.error('Preview error:', error)
+      setDeletePreviewCount(null)
+    }
+  }
+
+  // Execute delete
+  async function executeDelete(type: 'points' | 'time_range' | 'all') {
+    setDeleting(true)
+    try {
+      const body: { type: string; haystack_names?: string[]; from?: string; to?: string } = { type }
+
+      if (type === 'points') {
+        body.haystack_names = selectedPoints
+      } else if (type === 'time_range') {
+        body.from = deleteFromDate
+        body.to = deleteToDate
+      }
+
+      const response = await fetch('/api/data/delete', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+
+      if (!response.ok) throw new Error('Failed to delete')
+
+      setToast({ message: 'Data deleted successfully', type: 'success' })
+
+      setSelectedPoints([])
+      setDeleteFromDate("")
+      setDeleteToDate("")
+      setDeleteAllConfirm("")
+      setDeletePreviewCount(null)
+
+      await loadDataPoints()
+    } catch (error) {
+      setToast({
+        message: error instanceof Error ? error.message : 'Failed to delete data',
+        type: 'error'
+      })
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  // Toggle point selection
+  function togglePointSelection(pointName: string) {
+    setSelectedPoints(prev =>
+      prev.includes(pointName)
+        ? prev.filter(p => p !== pointName)
+        : [...prev, pointName]
+    )
+    setDeletePreviewCount(null)
+  }
+
   if (loading) {
     return (
-      <div className="container mx-auto p-6">
-        <div className="flex items-center justify-center h-64">
-          <RefreshCw className="w-8 h-8 animate-spin text-emerald-600" />
-        </div>
+      <div className="container mx-auto p-6 flex items-center justify-center h-64">
+        <RefreshCw className="w-8 h-8 animate-spin text-primary" />
       </div>
     )
   }
@@ -242,350 +351,308 @@ export default function SettingsPage() {
   if (!settings) {
     return (
       <div className="container mx-auto p-6">
-        <div className="text-center text-red-600">Failed to load settings</div>
+        <Alert variant="destructive">
+          <AlertDescription>Failed to load settings</AlertDescription>
+        </Alert>
       </div>
     )
   }
 
   return (
-    <div className="container mx-auto p-6">
+    <div className="container mx-auto p-6 space-y-6">
       {/* Toast */}
       {toast && (
-        <div className={`fixed top-20 right-6 z-50 px-4 py-3 rounded-lg shadow-lg ${
-          toast.type === 'success' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'
-        }`}>
-          {toast.message}
-        </div>
+        <Alert variant={toast.type === 'success' ? 'default' : 'destructive'} className="fixed top-20 right-6 z-50 w-auto">
+          <AlertDescription>{toast.message}</AlertDescription>
+        </Alert>
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
-          <p className="text-slate-600">Configure MQTT connection and data storage</p>
+          <h1 className="text-2xl font-bold">Settings</h1>
+          <p className="text-muted-foreground">Configure MQTT connection and data storage</p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           {hasUnsavedChanges && (
-            <span className="text-sm text-amber-600 font-medium bg-amber-50 px-3 py-1 rounded-full border border-amber-200">
+            <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50">
               Unsaved changes
-            </span>
+            </Badge>
           )}
-          <button
-            onClick={saveSettings}
-            disabled={saving}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors disabled:opacity-50 ${
-              hasUnsavedChanges
-                ? 'bg-amber-500 hover:bg-amber-600 text-white animate-pulse'
-                : 'bg-emerald-600 hover:bg-emerald-700 text-white'
-            }`}
-          >
+          <Button onClick={saveSettings} disabled={saving} variant={hasUnsavedChanges ? "default" : "outline"}>
             <Save className={`w-4 h-4 ${saving ? 'animate-spin' : ''}`} />
             {saving ? 'Saving...' : 'Save Settings'}
-          </button>
+          </Button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* MQTT Connection */}
-        <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Wifi className="w-5 h-5 text-emerald-600" />
-            <h2 className="text-lg font-semibold text-slate-900">MQTT Connection</h2>
-          </div>
-
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Broker Address
-              </label>
-              <input
-                type="text"
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Wifi className="w-5 h-5" />
+              MQTT Connection
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="broker">Broker Address</Label>
+              <Input
+                id="broker"
                 value={settings.mqtt.broker}
                 onChange={(e) => setSettings(prev => prev ? {
                   ...prev,
                   mqtt: { ...prev.mqtt, broker: e.target.value }
                 } : null)}
                 placeholder="e.g., 10.0.60.3"
-                className="w-full px-3 py-2 border-2 border-slate-200 rounded-lg focus:border-emerald-500 focus:outline-none"
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Port
-                </label>
-                <input
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="port">Port</Label>
+                <Input
+                  id="port"
                   type="number"
                   value={settings.mqtt.port}
                   onChange={(e) => setSettings(prev => prev ? {
                     ...prev,
                     mqtt: { ...prev.mqtt, port: parseInt(e.target.value) || 1883 }
                   } : null)}
-                  className="w-full px-3 py-2 border-2 border-slate-200 rounded-lg focus:border-emerald-500 focus:outline-none"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Client ID
-                </label>
-                <input
-                  type="text"
+              <div className="space-y-2">
+                <Label htmlFor="clientId">Client ID</Label>
+                <Input
+                  id="clientId"
                   value={settings.mqtt.clientId}
                   onChange={(e) => setSettings(prev => prev ? {
                     ...prev,
                     mqtt: { ...prev.mqtt, clientId: e.target.value }
                   } : null)}
-                  className="w-full px-3 py-2 border-2 border-slate-200 rounded-lg focus:border-emerald-500 focus:outline-none"
                 />
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Username
-              </label>
-              <input
-                type="text"
-                value={settings.mqtt.username}
-                onChange={(e) => setSettings(prev => prev ? {
-                  ...prev,
-                  mqtt: { ...prev.mqtt, username: e.target.value }
-                } : null)}
-                placeholder="Optional"
-                className="w-full px-3 py-2 border-2 border-slate-200 rounded-lg focus:border-emerald-500 focus:outline-none"
-              />
+            <Separator />
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="username">Username</Label>
+                <Input
+                  id="username"
+                  value={settings.mqtt.username}
+                  onChange={(e) => setSettings(prev => prev ? {
+                    ...prev,
+                    mqtt: { ...prev.mqtt, username: e.target.value }
+                  } : null)}
+                  placeholder="Optional"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  value={settings.mqtt.password}
+                  onChange={(e) => setSettings(prev => prev ? {
+                    ...prev,
+                    mqtt: { ...prev.mqtt, password: e.target.value }
+                  } : null)}
+                  placeholder="Optional"
+                />
+              </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Password
-              </label>
-              <input
-                type="password"
-                value={settings.mqtt.password}
-                onChange={(e) => setSettings(prev => prev ? {
-                  ...prev,
-                  mqtt: { ...prev.mqtt, password: e.target.value }
-                } : null)}
-                placeholder="Optional"
-                className="w-full px-3 py-2 border-2 border-slate-200 rounded-lg focus:border-emerald-500 focus:outline-none"
-              />
-            </div>
+            <Separator />
 
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
+            <div className="flex items-center gap-3">
+              <Checkbox
                 id="enabled"
                 checked={settings.mqtt.enabled}
-                onChange={(e) => setSettings(prev => prev ? {
+                onCheckedChange={(checked) => setSettings(prev => prev ? {
                   ...prev,
-                  mqtt: { ...prev.mqtt, enabled: e.target.checked }
+                  mqtt: { ...prev.mqtt, enabled: checked === true }
                 } : null)}
-                className="rounded"
               />
-              <label htmlFor="enabled" className="text-sm text-slate-700">
+              <Label htmlFor="enabled" className="cursor-pointer font-medium">
                 Enable MQTT connection
-              </label>
+              </Label>
             </div>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
 
         {/* TLS/SSL Settings */}
-        <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg p-6">
-          <div className="flex items-center gap-2 mb-4">
-            {settings.mqtt.tlsEnabled ? (
-              <Shield className="w-5 h-5 text-emerald-600" />
-            ) : (
-              <ShieldOff className="w-5 h-5 text-slate-400" />
-            )}
-            <h2 className="text-lg font-semibold text-slate-900">TLS/SSL Security</h2>
-          </div>
-
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              {settings.mqtt.tlsEnabled ? <Shield className="w-5 h-5" /> : <ShieldOff className="w-5 h-5 text-muted-foreground" />}
+              TLS/SSL Security
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center gap-3">
+              <Checkbox
                 id="tlsEnabled"
                 checked={settings.mqtt.tlsEnabled}
-                onChange={(e) => setSettings(prev => prev ? {
+                onCheckedChange={(checked) => setSettings(prev => prev ? {
                   ...prev,
-                  mqtt: { ...prev.mqtt, tlsEnabled: e.target.checked }
+                  mqtt: { ...prev.mqtt, tlsEnabled: checked === true }
                 } : null)}
-                className="rounded"
               />
-              <label htmlFor="tlsEnabled" className="text-sm text-slate-700">
+              <Label htmlFor="tlsEnabled" className="cursor-pointer font-medium">
                 Enable TLS/SSL encryption
-              </label>
+              </Label>
             </div>
 
             {settings.mqtt.tlsEnabled && (
               <>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="tlsInsecure"
-                    checked={settings.mqtt.tlsInsecure}
-                    onChange={(e) => setSettings(prev => prev ? {
-                      ...prev,
-                      mqtt: { ...prev.mqtt, tlsInsecure: e.target.checked }
-                    } : null)}
-                    className="rounded"
-                  />
-                  <label htmlFor="tlsInsecure" className="text-sm text-slate-700">
-                    Skip certificate verification (insecure)
-                  </label>
-                </div>
+                <Separator />
+
+                <Alert variant="default" className="border-amber-200 bg-amber-50">
+                  <div className="flex items-center gap-3">
+                    <Checkbox
+                      id="tlsInsecure"
+                      checked={settings.mqtt.tlsInsecure}
+                      onCheckedChange={(checked) => setSettings(prev => prev ? {
+                        ...prev,
+                        mqtt: { ...prev.mqtt, tlsInsecure: checked === true }
+                      } : null)}
+                    />
+                    <Label htmlFor="tlsInsecure" className="cursor-pointer text-amber-800">
+                      Skip certificate verification (insecure)
+                    </Label>
+                  </div>
+                </Alert>
 
                 {!settings.mqtt.tlsInsecure && (
-                  <div className="pt-2 border-t border-slate-100">
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      CA Certificate
-                    </label>
+                  <>
+                    <Separator />
 
-                    {certStatus?.ca.exists ? (
-                      <div className="flex items-center justify-between py-2 px-3 bg-emerald-50 border border-emerald-200 rounded-lg">
-                        <span className="text-sm text-emerald-700">
-                          {certStatus.ca.filename}
-                        </span>
-                        <button
-                          onClick={deleteCertificate}
-                          className="text-red-500 hover:text-red-700"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div>
-                        <input
-                          type="file"
-                          ref={fileInputRef}
-                          accept=".pem,.crt,.cer"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0]
-                            if (file) uploadCertificate(file)
-                          }}
-                          className="hidden"
-                        />
-                        <button
-                          onClick={() => fileInputRef.current?.click()}
-                          className="flex items-center gap-2 px-4 py-2 border-2 border-dashed border-slate-300 rounded-lg hover:border-emerald-500 transition-colors"
-                        >
-                          <Upload className="w-4 h-4" />
-                          Upload CA Certificate
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                    <div className="space-y-2">
+                      <Label>CA Certificate</Label>
+
+                      {certStatus?.ca.exists ? (
+                        <div className="flex items-center justify-between p-3 border rounded-lg bg-emerald-50 border-emerald-200">
+                          <span className="text-sm font-medium text-emerald-700">
+                            {certStatus.ca.filename}
+                          </span>
+                          <Button variant="ghost" size="sm" onClick={deleteCertificate}>
+                            <Trash2 className="w-4 h-4 text-destructive" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <div>
+                          <input
+                            type="file"
+                            ref={fileInputRef}
+                            accept=".pem,.crt,.cer"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0]
+                              if (file) uploadCertificate(file)
+                            }}
+                            className="hidden"
+                          />
+                          <Button variant="outline" onClick={() => fileInputRef.current?.click()} className="w-full">
+                            <Upload className="w-4 h-4" />
+                            Upload CA Certificate
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </>
                 )}
               </>
             )}
-          </div>
-        </div>
+          </CardContent>
+        </Card>
 
         {/* Topic Subscriptions */}
-        <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Hash className="w-5 h-5 text-emerald-600" />
-            <h2 className="text-lg font-semibold text-slate-900">Topic Subscriptions</h2>
-          </div>
-
-          <div className="space-y-4">
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Hash className="w-5 h-5" />
+              Topic Subscriptions
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
             <div className="flex gap-2">
-              <input
-                type="text"
+              <Input
                 value={newTopic}
                 onChange={(e) => setNewTopic(e.target.value)}
                 placeholder="e.g., bacnet/#"
-                className="flex-1 px-3 py-2 border-2 border-slate-200 rounded-lg focus:border-emerald-500 focus:outline-none font-mono text-sm"
+                className="font-mono text-sm"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') addTopicPattern()
                 }}
               />
-              <button
-                onClick={addTopicPattern}
-                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
-              >
+              <Button onClick={addTopicPattern} size="icon">
                 <Plus className="w-4 h-4" />
-                Add
-              </button>
+              </Button>
             </div>
 
-            <div className="border border-slate-200 rounded-lg divide-y divide-slate-200">
-              {settings.mqtt.topicPatterns.map((pattern, index) => (
-                <div
-                  key={index}
-                  className={`flex items-center justify-between py-3 px-4 ${index % 2 === 0 ? 'bg-slate-50' : ''}`}
-                >
-                  <code className="text-sm text-slate-700 font-mono">{pattern}</code>
-                  <button
-                    onClick={() => removeTopicPattern(index)}
-                    className="text-red-500 hover:text-red-700 p-1"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-              {settings.mqtt.topicPatterns.length === 0 && (
-                <p className="text-sm text-slate-500 text-center py-4 px-4">
-                  No topics configured. Add a topic pattern to start receiving data.
+            <div className="border rounded-lg overflow-hidden">
+              {settings.mqtt.topicPatterns.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4 bg-muted">
+                  No topics configured
                 </p>
+              ) : (
+                settings.mqtt.topicPatterns.map((pattern, index) => (
+                  <div
+                    key={index}
+                    className={`flex items-center justify-between py-2 px-3 ${index > 0 ? 'border-t' : ''} ${index % 2 === 0 ? 'bg-muted/50' : ''}`}
+                  >
+                    <code className="text-sm font-mono">{pattern}</code>
+                    <Button variant="ghost" size="sm" onClick={() => removeTopicPattern(index)}>
+                      <X className="w-4 h-4 text-destructive" />
+                    </Button>
+                  </div>
+                ))
               )}
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                QoS Level
-              </label>
-              <select
-                value={settings.mqtt.qos}
-                onChange={(e) => setSettings(prev => prev ? {
+            <Separator />
+
+            <div className="space-y-2">
+              <Label>QoS Level</Label>
+              <Select
+                value={settings.mqtt.qos.toString()}
+                onValueChange={(value) => setSettings(prev => prev ? {
                   ...prev,
-                  mqtt: { ...prev.mqtt, qos: parseInt(e.target.value) }
+                  mqtt: { ...prev.mqtt, qos: parseInt(value) }
                 } : null)}
-                className="w-full px-3 py-2 border-2 border-slate-200 rounded-lg focus:border-emerald-500 focus:outline-none"
               >
-                <option value={0}>0 - At most once</option>
-                <option value={1}>1 - At least once</option>
-                <option value={2}>2 - Exactly once</option>
-              </select>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select QoS" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">0 - At most once</SelectItem>
+                  <SelectItem value="1">1 - At least once</SelectItem>
+                  <SelectItem value="2">2 - Exactly once</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
 
-        {/* System Settings */}
-        <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Clock className="w-5 h-5 text-emerald-600" />
-            <h2 className="text-lg font-semibold text-slate-900">System Settings</h2>
-          </div>
-
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Timezone
-              </label>
-              <select
-                value={settings.system.timezone}
-                onChange={(e) => setSettings(prev => prev ? {
-                  ...prev,
-                  system: { ...prev.system, timezone: e.target.value }
-                } : null)}
-                className="w-full px-3 py-2 border-2 border-slate-200 rounded-lg focus:border-emerald-500 focus:outline-none"
-              >
-                {timezones.map((tz) => (
-                  <option key={tz} value={tz}>
-                    {tz}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Data Retention (days)
-              </label>
-              <input
+        {/* Data Management */}
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Database className="w-5 h-5" />
+              Data Management
+            </CardTitle>
+            <CardDescription>
+              Configure retention and manage stored data
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Retention */}
+            <div className="space-y-2">
+              <Label htmlFor="retention">Data Retention (days)</Label>
+              <Input
+                id="retention"
                 type="number"
                 value={settings.system.retentionDays}
                 onChange={(e) => setSettings(prev => prev ? {
@@ -594,14 +661,111 @@ export default function SettingsPage() {
                 } : null)}
                 min={1}
                 max={365}
-                className="w-full px-3 py-2 border-2 border-slate-200 rounded-lg focus:border-emerald-500 focus:outline-none"
               />
-              <p className="text-xs text-slate-500 mt-1">
+              <p className="text-xs text-muted-foreground">
                 Data older than this will be automatically deleted
               </p>
             </div>
-          </div>
-        </div>
+
+            <Separator />
+
+            {/* Delete by Points */}
+            <div className="space-y-2">
+              <Label>Delete by Points</Label>
+              <div className="border rounded-lg max-h-32 overflow-y-auto">
+                {dataPoints.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-3">No data points</p>
+                ) : (
+                  dataPoints.map((point, index) => (
+                    <div
+                      key={point.name}
+                      className={`flex items-center justify-between py-2 px-3 cursor-pointer hover:bg-muted ${index > 0 ? 'border-t' : ''} ${selectedPoints.includes(point.name) ? 'bg-primary/10' : ''}`}
+                      onClick={() => togglePointSelection(point.name)}
+                    >
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          checked={selectedPoints.includes(point.name)}
+                          onClick={(e) => e.stopPropagation()}
+                          onCheckedChange={() => togglePointSelection(point.name)}
+                        />
+                        <code className="text-xs font-mono truncate max-w-48">{point.name}</code>
+                      </div>
+                      <Badge variant="secondary" className="text-xs">{point.count}</Badge>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => previewDelete('points')} disabled={selectedPoints.length === 0}>
+                  Preview
+                </Button>
+                <Button variant="destructive" size="sm" onClick={() => executeDelete('points')} disabled={selectedPoints.length === 0 || deleting}>
+                  <Trash2 className="w-4 h-4" />
+                  Delete ({selectedPoints.length})
+                </Button>
+                {deletePreviewCount !== null && selectedPoints.length > 0 && (
+                  <span className="text-xs text-muted-foreground">{deletePreviewCount.toLocaleString()} records</span>
+                )}
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Delete by Time Range */}
+            <div className="space-y-2">
+              <Label>Delete by Time Range</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <Input
+                  type="datetime-local"
+                  value={deleteFromDate}
+                  onChange={(e) => { setDeleteFromDate(e.target.value); setDeletePreviewCount(null) }}
+                  placeholder="From"
+                />
+                <Input
+                  type="datetime-local"
+                  value={deleteToDate}
+                  onChange={(e) => { setDeleteToDate(e.target.value); setDeletePreviewCount(null) }}
+                  placeholder="To"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => previewDelete('time_range')} disabled={!deleteFromDate || !deleteToDate}>
+                  Preview
+                </Button>
+                <Button variant="destructive" size="sm" onClick={() => executeDelete('time_range')} disabled={!deleteFromDate || !deleteToDate || deleting}>
+                  <Trash2 className="w-4 h-4" />
+                  Delete Range
+                </Button>
+                {deletePreviewCount !== null && deleteFromDate && deleteToDate && (
+                  <span className="text-xs text-muted-foreground">{deletePreviewCount.toLocaleString()} records</span>
+                )}
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Delete All */}
+            <Alert variant="destructive">
+              <AlertTriangle className="w-4 h-4" />
+              <AlertDescription className="space-y-2">
+                <p className="font-medium">Danger Zone</p>
+                <p className="text-xs">Permanently delete ALL sensor data. This cannot be undone.</p>
+                <div className="flex items-center gap-2 mt-2">
+                  <Input
+                    placeholder="Type DELETE to confirm"
+                    value={deleteAllConfirm}
+                    onChange={(e) => setDeleteAllConfirm(e.target.value)}
+                    className="max-w-40 h-8 text-sm"
+                  />
+                  <Button variant="destructive" size="sm" onClick={() => executeDelete('all')} disabled={deleteAllConfirm !== 'DELETE' || deleting}>
+                    <Trash2 className="w-4 h-4" />
+                    Delete All
+                  </Button>
+                </div>
+              </AlertDescription>
+            </Alert>
+          </CardContent>
+        </Card>
       </div>
     </div>
   )

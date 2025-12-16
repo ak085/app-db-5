@@ -45,7 +45,6 @@ export async function GET() {
         connectionStatus: mqttConfig.connectionStatus
       },
       system: {
-        timezone: systemSettings.timezone,
         retentionDays: systemSettings.retentionDays
       }
     })
@@ -103,12 +102,10 @@ export async function POST(request: NextRequest) {
       await prisma.systemSettings.upsert({
         where: { id: 1 },
         update: {
-          timezone: system.timezone,
           retentionDays: system.retentionDays
         },
         create: {
           id: 1,
-          timezone: system.timezone,
           retentionDays: system.retentionDays
         }
       })

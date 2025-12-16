@@ -9,15 +9,8 @@ interface SensorReading {
   dis: string
   value: number
   units: string
-  device_id: number
-  device_name: string
-  device_ip: string
-  object_type: string
-  object_instance: number
   quality: string
-  site_id: string
-  equipment_type: string
-  equipment_id: string
+  metadata: Record<string, unknown>
 }
 
 export async function GET(request: NextRequest) {
@@ -58,7 +51,7 @@ export async function GET(request: NextRequest) {
       params.push(haystackName)
     }
 
-    // Query data
+    // Query data with dynamic metadata
     const sql = `
       SELECT
         time,
@@ -66,15 +59,8 @@ export async function GET(request: NextRequest) {
         dis,
         value,
         units,
-        device_id,
-        device_name,
-        device_ip,
-        object_type,
-        object_instance,
         quality,
-        site_id,
-        equipment_type,
-        equipment_id
+        metadata
       FROM sensor_readings
       WHERE ${timeFilter} ${haystackFilter}
       ORDER BY time DESC
@@ -84,35 +70,48 @@ export async function GET(request: NextRequest) {
     const readings = await queryTimescale<SensorReading>(sql, params)
 
     if (format === 'json') {
-      // Return JSON
+      // Return JSON with flattened metadata
       const filename = `sensor_data_${new Date().toISOString().split('T')[0]}.json`
 
-      return new NextResponse(JSON.stringify(readings, null, 2), {
+      // Flatten metadata into each reading for cleaner export
+      const flattenedReadings = readings.map(reading => ({
+        time: reading.time,
+        haystack_name: reading.haystack_name,
+        dis: reading.dis,
+        value: reading.value,
+        units: reading.units,
+        quality: reading.quality,
+        ...(reading.metadata || {})
+      }))
+
+      return new NextResponse(JSON.stringify(flattenedReadings, null, 2), {
         headers: {
           'Content-Type': 'application/json',
           'Content-Disposition': `attachment; filename="${filename}"`
         }
       })
     } else {
-      // Return CSV
+      // Return CSV with dynamic columns from metadata
       const filename = `sensor_data_${new Date().toISOString().split('T')[0]}.csv`
 
-      // CSV header
+      // Collect all unique metadata keys across all readings
+      const metadataKeys = new Set<string>()
+      for (const reading of readings) {
+        if (reading.metadata) {
+          Object.keys(reading.metadata).forEach(key => metadataKeys.add(key))
+        }
+      }
+      const sortedMetadataKeys = Array.from(metadataKeys).sort()
+
+      // Build CSV headers: core fields + dynamic metadata fields
       const headers = [
         'time',
         'haystack_name',
         'display_name',
         'value',
         'units',
-        'device_id',
-        'device_name',
-        'device_ip',
-        'object_type',
-        'object_instance',
         'quality',
-        'site_id',
-        'equipment_type',
-        'equipment_id'
+        ...sortedMetadataKeys
       ]
 
       // Build CSV content
@@ -125,15 +124,11 @@ export async function GET(request: NextRequest) {
           escapeCSV(reading.dis),
           reading.value,
           escapeCSV(reading.units),
-          reading.device_id,
-          escapeCSV(reading.device_name),
-          escapeCSV(reading.device_ip),
-          escapeCSV(reading.object_type),
-          reading.object_instance,
           escapeCSV(reading.quality),
-          escapeCSV(reading.site_id),
-          escapeCSV(reading.equipment_type),
-          escapeCSV(reading.equipment_id)
+          ...sortedMetadataKeys.map(key => {
+            const val = reading.metadata?.[key]
+            return val !== undefined && val !== null ? escapeCSV(String(val)) : ''
+          })
         ]
         csvRows.push(row.join(','))
       }

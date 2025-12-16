@@ -5,35 +5,20 @@
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 -- Create sensor_readings table
+-- Uses a hybrid schema: core indexed columns + dynamic JSONB metadata
 CREATE TABLE IF NOT EXISTS sensor_readings (
   time TIMESTAMPTZ NOT NULL,
 
-  -- Site and equipment identifiers
-  site_id TEXT,
-  equipment_type TEXT,
-  equipment_id TEXT,
-
-  -- BACnet identifiers
-  device_id INTEGER NOT NULL,
-  device_name TEXT,
-  device_ip TEXT,
-  object_type TEXT NOT NULL,
-  object_instance INTEGER NOT NULL,
-
-  -- Point information (nullable - MQTT uses BACnet identifiers)
-  point_id INTEGER,
-  point_name TEXT,
+  -- Core fields (always indexed for fast queries)
   haystack_name TEXT,
   dis TEXT,
-
-  -- Measurement data
   value DOUBLE PRECISION,
   units TEXT,
   quality TEXT CHECK (quality IN ('good', 'uncertain', 'bad')),
 
-  -- Metadata
-  poll_duration REAL,
-  poll_cycle BIGINT
+  -- Dynamic metadata (stores all other fields from MQTT payload)
+  -- This allows flexible schema without null columns
+  metadata JSONB DEFAULT '{}'::jsonb
 );
 
 -- Convert to hypertable (partitioned by time)
@@ -45,22 +30,20 @@ SELECT create_hypertable(
 );
 
 -- Create indexes for common queries
-CREATE INDEX IF NOT EXISTS idx_sensor_point_time
-  ON sensor_readings (point_id, time DESC);
-
-CREATE INDEX IF NOT EXISTS idx_sensor_device_time
-  ON sensor_readings (device_id, time DESC);
-
-CREATE INDEX IF NOT EXISTS idx_sensor_equipment_time
-  ON sensor_readings (site_id, equipment_type, equipment_id, time DESC);
-
-CREATE INDEX IF NOT EXISTS idx_sensor_haystack
+CREATE INDEX IF NOT EXISTS idx_sensor_haystack_time
   ON sensor_readings (haystack_name, time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_sensor_time
+  ON sensor_readings (time DESC);
+
+-- GIN index for JSONB metadata queries (e.g., WHERE metadata->>'device_id' = '123')
+CREATE INDEX IF NOT EXISTS idx_sensor_metadata
+  ON sensor_readings USING GIN (metadata);
 
 -- Enable compression (compress data older than 6 hours)
 ALTER TABLE sensor_readings SET (
   timescaledb.compress,
-  timescaledb.compress_segmentby = 'device_id, object_type, object_instance',
+  timescaledb.compress_segmentby = 'haystack_name',
   timescaledb.compress_orderby = 'time DESC'
 );
 
@@ -83,20 +66,15 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS sensor_readings_5min
 WITH (timescaledb.continuous) AS
 SELECT
   time_bucket('5 minutes', time) AS bucket,
-  device_id,
-  object_type,
-  object_instance,
   haystack_name,
-  site_id,
-  equipment_type,
-  equipment_id,
+  dis,
   AVG(value) AS avg_value,
   MIN(value) AS min_value,
   MAX(value) AS max_value,
   COUNT(*) AS sample_count
 FROM sensor_readings
 WHERE quality = 'good'
-GROUP BY bucket, device_id, object_type, object_instance, haystack_name, site_id, equipment_type, equipment_id;
+GROUP BY bucket, haystack_name, dis;
 
 -- Refresh policy for continuous aggregate (refresh every 5 minutes)
 SELECT add_continuous_aggregate_policy(

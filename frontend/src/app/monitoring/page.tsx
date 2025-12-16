@@ -9,6 +9,17 @@ import {
   ChevronLeft,
   ChevronRight
 } from "lucide-react"
+import { Card, CardContent } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 interface SensorReading {
   time: string
@@ -16,9 +27,10 @@ interface SensorReading {
   dis: string
   value: number
   units: string
-  device_id: number
-  device_name: string
+  device_id: string | null
+  device_name: string | null
   quality: string
+  metadata?: Record<string, unknown>
 }
 
 interface MonitoringData {
@@ -39,12 +51,17 @@ interface MonitoringData {
 export default function MonitoringPage() {
   const [data, setData] = useState<MonitoringData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [autoRefresh, setAutoRefresh] = useState(false)
+  const [autoRefresh, setAutoRefresh] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('monitoring-autoRefresh') === 'true'
+    }
+    return false
+  })
 
   // Filters
   const [page, setPage] = useState(1)
   const [timeRange, setTimeRange] = useState('1h')
-  const [haystackFilter, setHaystackFilter] = useState('')
+  const [haystackFilter, setHaystackFilter] = useState('all')
 
   const fetchData = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true)
@@ -55,7 +72,7 @@ export default function MonitoringPage() {
         range: timeRange
       })
 
-      if (haystackFilter) {
+      if (haystackFilter && haystackFilter !== 'all') {
         params.set('haystack', haystackFilter)
       }
 
@@ -80,6 +97,11 @@ export default function MonitoringPage() {
     return () => clearInterval(interval)
   }, [autoRefresh, fetchData])
 
+  // Persist autoRefresh setting to localStorage
+  useEffect(() => {
+    localStorage.setItem('monitoring-autoRefresh', autoRefresh.toString())
+  }, [autoRefresh])
+
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr)
     return date.toLocaleString()
@@ -95,113 +117,119 @@ export default function MonitoringPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Monitoring</h1>
-          <p className="text-slate-600">View collected sensor data</p>
+          <h1 className="text-2xl font-bold text-foreground">Monitoring</h1>
+          <p className="text-muted-foreground">View collected sensor data</p>
         </div>
         <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 text-sm text-slate-600">
-            <input
-              type="checkbox"
+          <div className="flex items-center gap-3 px-3 py-2 bg-card rounded-lg border border-border">
+            <Checkbox
+              id="autoRefresh"
               checked={autoRefresh}
-              onChange={(e) => setAutoRefresh(e.target.checked)}
-              className="rounded"
+              onCheckedChange={(checked) => setAutoRefresh(checked === true)}
             />
-            Auto-refresh
-          </label>
-          <button
-            onClick={() => fetchData(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
-          >
+            <Label htmlFor="autoRefresh" className="cursor-pointer text-sm">
+              Auto-refresh
+            </Label>
+          </div>
+          <Button onClick={() => fetchData(true)}>
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
-          </button>
+          </Button>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg p-4 mb-6">
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-2">
-            <Clock className="w-4 h-4 text-slate-500" />
-            <select
-              value={timeRange}
-              onChange={(e) => {
-                setTimeRange(e.target.value)
-                setPage(1)
-              }}
-              className="px-3 py-2 border border-slate-200 rounded-lg focus:border-emerald-500 focus:outline-none"
-            >
-              <option value="1h">Last 1 hour</option>
-              <option value="24h">Last 24 hours</option>
-              <option value="7d">Last 7 days</option>
-              <option value="30d">Last 30 days</option>
-            </select>
+      <Card className="mb-6">
+        <CardContent className="pt-6">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-muted-foreground" />
+              <Select
+                value={timeRange}
+                onValueChange={(value) => {
+                  setTimeRange(value)
+                  setPage(1)
+                }}
+              >
+                <SelectTrigger className="w-[160px]">
+                  <SelectValue placeholder="Time range" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1h">Last 1 hour</SelectItem>
+                  <SelectItem value="24h">Last 24 hours</SelectItem>
+                  <SelectItem value="7d">Last 7 days</SelectItem>
+                  <SelectItem value="30d">Last 30 days</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4 text-muted-foreground" />
+              <Select
+                value={haystackFilter}
+                onValueChange={(value) => {
+                  setHaystackFilter(value)
+                  setPage(1)
+                }}
+              >
+                <SelectTrigger className="w-[220px]">
+                  <SelectValue placeholder="All points" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All points</SelectItem>
+                  {data?.filters.haystackNames.map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex-1" />
+
+            <Button variant="secondary" asChild>
+              <a href={`/api/export?format=csv&range=${timeRange}${haystackFilter && haystackFilter !== 'all' ? `&haystack=${haystackFilter}` : ''}`}>
+                <Download className="w-4 h-4" />
+                Export CSV
+              </a>
+            </Button>
+
+            <Button variant="secondary" asChild>
+              <a href={`/api/export?format=json&range=${timeRange}${haystackFilter && haystackFilter !== 'all' ? `&haystack=${haystackFilter}` : ''}`}>
+                <Download className="w-4 h-4" />
+                Export JSON
+              </a>
+            </Button>
           </div>
-
-          <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-slate-500" />
-            <select
-              value={haystackFilter}
-              onChange={(e) => {
-                setHaystackFilter(e.target.value)
-                setPage(1)
-              }}
-              className="px-3 py-2 border border-slate-200 rounded-lg focus:border-emerald-500 focus:outline-none min-w-[200px]"
-            >
-              <option value="">All points</option>
-              {data?.filters.haystackNames.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex-1" />
-
-          <a
-            href={`/api/export?format=csv&range=${timeRange}${haystackFilter ? `&haystack=${haystackFilter}` : ''}`}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors"
-          >
-            <Download className="w-4 h-4" />
-            Export CSV
-          </a>
-
-          <a
-            href={`/api/export?format=json&range=${timeRange}${haystackFilter ? `&haystack=${haystackFilter}` : ''}`}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors"
-          >
-            <Download className="w-4 h-4" />
-            Export JSON
-          </a>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
       {/* Data Table */}
-      <div className="bg-white rounded-xl border-2 border-slate-300 shadow-lg overflow-hidden">
+      <Card>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="px-4 py-3 text-left text-sm font-semibold text-slate-700">Time</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-slate-700">Haystack Name</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-slate-700">Display Name</th>
-                <th className="px-4 py-3 text-right text-sm font-semibold text-slate-700">Value</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-slate-700">Units</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-slate-700">Device</th>
-                <th className="px-4 py-3 text-center text-sm font-semibold text-slate-700">Quality</th>
+              <tr className="bg-muted border-b-2 border-border">
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Time</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Haystack Name</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Display Name</th>
+                <th className="px-4 py-3 text-right text-sm font-semibold text-foreground">Value</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Units</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">Device</th>
+                <th className="px-4 py-3 text-center text-sm font-semibold text-foreground">Quality</th>
               </tr>
             </thead>
             <tbody>
               {loading && !data ? (
                 <tr>
                   <td colSpan={7} className="px-4 py-8 text-center">
-                    <RefreshCw className="w-6 h-6 animate-spin text-emerald-600 mx-auto" />
+                    <RefreshCw className="w-6 h-6 animate-spin text-primary mx-auto" />
                   </td>
                 </tr>
               ) : data?.readings.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground bg-muted">
                     No data found for the selected filters
                   </td>
                 </tr>
@@ -209,35 +237,37 @@ export default function MonitoringPage() {
                 data?.readings.map((reading, index) => (
                   <tr
                     key={index}
-                    className="border-b border-slate-100 hover:bg-slate-50"
+                    className={`border-b border-border hover:bg-muted ${
+                      index % 2 === 0 ? 'bg-card' : 'bg-muted/50'
+                    }`}
                   >
-                    <td className="px-4 py-3 text-sm text-slate-600">
+                    <td className="px-4 py-3 text-sm text-muted-foreground">
                       {formatDate(reading.time)}
                     </td>
                     <td className="px-4 py-3">
-                      <code className="text-sm text-slate-700 font-mono">
+                      <code className="text-sm text-foreground font-mono bg-muted px-2 py-0.5 rounded">
                         {reading.haystack_name || '-'}
                       </code>
                     </td>
-                    <td className="px-4 py-3 text-sm text-slate-700">
+                    <td className="px-4 py-3 text-sm text-foreground">
                       {reading.dis || '-'}
                     </td>
-                    <td className="px-4 py-3 text-sm text-right font-mono font-medium text-slate-900">
+                    <td className="px-4 py-3 text-sm text-right font-mono font-medium text-foreground">
                       {formatValue(reading.value)}
                     </td>
-                    <td className="px-4 py-3 text-sm text-slate-600">
+                    <td className="px-4 py-3 text-sm text-muted-foreground">
                       {reading.units || '-'}
                     </td>
-                    <td className="px-4 py-3 text-sm text-slate-600">
-                      {reading.device_name || `Device ${reading.device_id}`}
+                    <td className="px-4 py-3 text-sm text-muted-foreground">
+                      {reading.device_name || (reading.device_id ? `Device ${reading.device_id}` : '-')}
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
+                      <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full border ${
                         reading.quality === 'good'
-                          ? 'bg-emerald-100 text-emerald-700'
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                           : reading.quality === 'uncertain'
-                          ? 'bg-yellow-100 text-yellow-700'
-                          : 'bg-red-100 text-red-700'
+                          ? 'bg-yellow-50 text-yellow-700 border-yellow-200'
+                          : 'bg-red-50 text-red-700 border-red-200'
                       }`}>
                         {reading.quality || 'unknown'}
                       </span>
@@ -251,34 +281,36 @@ export default function MonitoringPage() {
 
         {/* Pagination */}
         {data && data.pagination.totalPages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200">
-            <div className="text-sm text-slate-600">
+          <div className="flex items-center justify-between px-4 py-3 border-t-2 border-border bg-muted">
+            <div className="text-sm text-muted-foreground">
               Showing {((page - 1) * 50) + 1} to {Math.min(page * 50, data.pagination.totalCount)} of {data.pagination.totalCount} entries
             </div>
             <div className="flex items-center gap-2">
-              <button
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => setPage(p => Math.max(1, p - 1))}
                 disabled={page === 1}
-                className="flex items-center gap-1 px-3 py-1 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <ChevronLeft className="w-4 h-4" />
                 Previous
-              </button>
-              <span className="px-3 py-1 text-sm text-slate-600">
+              </Button>
+              <span className="px-3 py-1 text-sm text-muted-foreground">
                 Page {page} of {data.pagination.totalPages}
               </span>
-              <button
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => setPage(p => Math.min(data.pagination.totalPages, p + 1))}
                 disabled={page === data.pagination.totalPages}
-                className="flex items-center gap-1 px-3 py-1 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Next
                 <ChevronRight className="w-4 h-4" />
-              </button>
+              </Button>
             </div>
           </div>
         )}
-      </div>
+      </Card>
     </div>
   )
 }
