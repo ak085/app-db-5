@@ -247,6 +247,25 @@ if (!settings) {
 }
 ```
 
+### 9. Setup Wizard Returns "Unauthorized" After Login
+
+If your app has a first-time setup wizard that runs after login, the API calls may fail with "Unauthorized" even though login succeeded. This is due to session cookie handling issues in some deployments.
+
+**Fix:** Add setup-related endpoints to publicPaths in middleware.ts:
+
+```typescript
+const publicPaths = [
+  '/login',
+  '/api/auth/login',
+  '/api/auth/logout',
+  '/api/dashboard/summary',  // Docker healthcheck
+  '/api/settings',           // First-time setup wizard
+  '/api/network/interfaces', // First-time setup wizard
+]
+```
+
+**Note:** This allows unauthenticated access to these endpoints. The setup wizard is only shown when `needsSetup` is true (initial configuration not complete). Once configured, users must still log in to access the Settings page.
+
 ---
 
 ## Integration Steps (Order Matters)
