@@ -11,10 +11,19 @@ export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
-    // Get MQTT config and connection status
-    const mqttConfig = await prisma.mqttConfig.findFirst({
-      where: { id: 1 }
-    })
+    // Get MQTT config and connection status using raw query for fresh data
+    // This bypasses any connection pooling/caching issues between Prisma and psycopg2
+    const mqttConfigResult = await prisma.$queryRaw<Array<{
+      broker: string | null
+      port: number | null
+      connectionStatus: string | null
+      lastConnected: Date | null
+      tlsEnabled: boolean | null
+      enabled: boolean | null
+      topicPatterns: string[] | null
+    }>>`SELECT broker, port, "connectionStatus", "lastConnected", "tlsEnabled", enabled, "topicPatterns" FROM "MqttConfig" WHERE id = 1 LIMIT 1`
+
+    const mqttConfig = mqttConfigResult[0] || null
 
     // Check TimescaleDB connection
     const timescaleConnected = await checkTimescaleConnection()

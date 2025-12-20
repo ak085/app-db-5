@@ -63,7 +63,8 @@ mqtt_connected = False
 stats = {
     'messages_received': 0,
     'messages_written': 0,
-    'errors': 0
+    'errors': 0,
+    'last_write_time': time.time()  # Initialize to now to suppress startup disconnect noise
 }
 
 # Deduplication cache
@@ -329,7 +330,7 @@ def on_connect(client, userdata, flags, reason_code, properties):
     if reason_code == 0:
         mqtt_connected = True
         logger.info(f"Connected to MQTT broker {mqtt_config['broker']}:{mqtt_config['port']}")
-        update_connection_status('connected', last_connected=True)
+        # Don't update status here - let main loop handle it based on actual data flow
 
         # Subscribe to configured topic patterns
         for pattern in mqtt_config['topic_patterns']:
@@ -338,7 +339,6 @@ def on_connect(client, userdata, flags, reason_code, properties):
     else:
         mqtt_connected = False
         logger.error(f"Failed to connect to MQTT broker, code: {reason_code}")
-        update_connection_status('error')
 
 
 def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
@@ -347,7 +347,8 @@ def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
     mqtt_connected = False
     if reason_code != 0:
         logger.warning(f"Unexpected disconnect from MQTT broker, code: {reason_code}")
-    update_connection_status('disconnected')
+    # Don't update status here - let main loop handle it based on actual data flow
+    # This prevents rapid connect/disconnect cycles from setting wrong status
 
 
 def on_message(client, userdata, msg):
@@ -420,7 +421,7 @@ def on_message(client, userdata, msg):
 
 def insert_sensor_reading(data):
     """Insert sensor reading into TimescaleDB with dynamic metadata"""
-    global timescale_conn
+    global timescale_conn, stats
 
     try:
         cursor = timescale_conn.cursor()
@@ -446,6 +447,9 @@ def insert_sensor_reading(data):
             'metadata': metadata_json
         })
         cursor.close()
+
+        # Track successful write time - main loop uses this to determine status
+        stats['last_write_time'] = time.time()
 
     except Exception as e:
         logger.error(f"Database insert error: {e}")
@@ -519,7 +523,6 @@ def connect_mqtt():
                     logger.info("TLS configured with system CA bundle")
 
         # Connect
-        update_connection_status('connecting')
         mqtt_client.connect(mqtt_config['broker'], mqtt_config['port'], keepalive=60)
         mqtt_client.loop_start()
 
@@ -529,7 +532,7 @@ def connect_mqtt():
 
     except Exception as e:
         logger.error(f"Failed to connect to MQTT broker: {e}")
-        update_connection_status('error')
+        # Don't update status here - let main loop handle it based on actual data flow
         return False
 
 
@@ -551,6 +554,9 @@ def main():
     while not ensure_schema_exists():
         logger.info("Waiting for schema to be ready...")
         time.sleep(5)
+
+    # Reset last_write_time to now (module import time may be stale)
+    stats['last_write_time'] = time.time()
 
     # Main loop - poll for config changes and maintain MQTT connection
     last_config_check = 0
@@ -630,6 +636,17 @@ def main():
         if not mqtt_connected and mqtt_config['broker'] and mqtt_config['enabled']:
             logger.info(f"Connecting to MQTT broker {mqtt_config['broker']}:{mqtt_config['port']}...")
             connect_mqtt()
+
+        # Update connection status based on actual data flow
+        # This is more reliable than callbacks during rapid connect/disconnect cycles
+        if mqtt_config['enabled'] and mqtt_config['broker']:
+            data_age = current_time - stats['last_write_time']
+            if stats['messages_written'] > 0 and data_age < 120:
+                # Data flowing - ensure status shows connected
+                update_connection_status('connected', last_connected=True)
+            elif data_age > 120:
+                # No data for 2+ minutes - mark as disconnected
+                update_connection_status('disconnected')
 
         # Sleep before next iteration
         time.sleep(5)
