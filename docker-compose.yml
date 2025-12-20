@@ -44,6 +44,8 @@ services:
     container_name: storage-frontend
     restart: unless-stopped
     environment:
+      # Required for Next.js 15 to listen on all interfaces
+      HOSTNAME: 0.0.0.0
       # Config database
       DATABASE_URL: postgresql://${POSTGRES_USER:-storage}:${POSTGRES_PASSWORD:-storage123}@postgres:5432/${POSTGRES_DB:-storage_config}
       # TimescaleDB for queries

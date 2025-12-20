@@ -9,6 +9,9 @@ RUN npm install
 # Copy application files
 COPY . .
 
+# Copy scripts folder for CLI tools
+COPY scripts ./scripts
+
 # Generate Prisma client
 RUN npx prisma generate
 

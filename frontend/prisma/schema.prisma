@@ -51,6 +51,11 @@ model MqttConfig {
 model SystemSettings {
   id                Int       @id @default(1)
 
+  // Authentication
+  adminUsername     String    @default("admin")
+  adminPasswordHash String    @default("")  // Empty = use default "admin"
+  masterPinHash     String?   // Optional, protects password changes
+
   // System
   retentionDays     Int       @default(30)
 

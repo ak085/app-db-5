@@ -13,7 +13,9 @@ import {
   X,
   Hash,
   Database,
-  AlertTriangle
+  AlertTriangle,
+  Lock,
+  Key
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -92,6 +94,17 @@ export default function SettingsPage() {
   const [deleteAllConfirm, setDeleteAllConfirm] = useState("")
   const [deletePreviewCount, setDeletePreviewCount] = useState<number | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  // Security state
+  const [currentPin, setCurrentPin] = useState("")
+  const [newPin, setNewPin] = useState("")
+  const [pinSaving, setPinSaving] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
+  const [masterPin, setMasterPin] = useState("")
+  const [passwordSaving, setPasswordSaving] = useState(false)
+  const [hasPinSet, setHasPinSet] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -269,6 +282,122 @@ export default function SettingsPage() {
   useEffect(() => {
     loadDataPoints()
   }, [])
+
+  // Check if master PIN is set (from settings response)
+  useEffect(() => {
+    if (settings) {
+      // We'll check via a simple API call or infer from the settings
+      // For now, we'll add a check when loading settings
+      checkPinStatus()
+    }
+  }, [settings])
+
+  async function checkPinStatus() {
+    try {
+      const response = await fetch('/api/settings')
+      if (response.ok) {
+        const data = await response.json()
+        setHasPinSet(data.hasPinSet || false)
+      }
+    } catch {
+      // Ignore errors
+    }
+  }
+
+  // Save new PIN
+  async function savePin() {
+    if (!newPin || !/^\d{4,6}$/.test(newPin)) {
+      setToast({ message: 'PIN must be 4-6 digits', type: 'error' })
+      return
+    }
+
+    if (hasPinSet && !currentPin) {
+      setToast({ message: 'Current PIN is required', type: 'error' })
+      return
+    }
+
+    setPinSaving(true)
+    try {
+      const response = await fetch('/api/auth/pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPin: hasPinSet ? currentPin : undefined, newPin })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to save PIN')
+      }
+
+      setToast({ message: 'Master PIN saved successfully', type: 'success' })
+      setCurrentPin("")
+      setNewPin("")
+      setHasPinSet(true)
+    } catch (error) {
+      setToast({
+        message: error instanceof Error ? error.message : 'Failed to save PIN',
+        type: 'error'
+      })
+    } finally {
+      setPinSaving(false)
+    }
+  }
+
+  // Change password
+  async function changePassword() {
+    if (!currentPassword || !newPassword) {
+      setToast({ message: 'Current and new password are required', type: 'error' })
+      return
+    }
+
+    if (newPassword.length < 4) {
+      setToast({ message: 'New password must be at least 4 characters', type: 'error' })
+      return
+    }
+
+    if (newPassword !== confirmPassword) {
+      setToast({ message: 'New passwords do not match', type: 'error' })
+      return
+    }
+
+    if (hasPinSet && !masterPin) {
+      setToast({ message: 'Master PIN is required to change password', type: 'error' })
+      return
+    }
+
+    setPasswordSaving(true)
+    try {
+      const response = await fetch('/api/auth/password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+          masterPin: hasPinSet ? masterPin : undefined
+        })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to change password')
+      }
+
+      setToast({ message: 'Password changed successfully', type: 'success' })
+      setCurrentPassword("")
+      setNewPassword("")
+      setConfirmPassword("")
+      setMasterPin("")
+    } catch (error) {
+      setToast({
+        message: error instanceof Error ? error.message : 'Failed to change password',
+        type: 'error'
+      })
+    } finally {
+      setPasswordSaving(false)
+    }
+  }
 
   // Preview delete count
   async function previewDelete(type: 'points' | 'time_range' | 'all') {
@@ -764,6 +893,144 @@ export default function SettingsPage() {
                 </div>
               </AlertDescription>
             </Alert>
+          </CardContent>
+        </Card>
+
+        {/* Security Settings */}
+        <Card className="lg:col-span-2">
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Lock className="w-5 h-5" />
+              Security Settings
+            </CardTitle>
+            <CardDescription>
+              Manage admin password and Master PIN
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Master PIN Section */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <Key className="w-4 h-4" />
+                  <Label className="font-medium">Master PIN</Label>
+                  {hasPinSet && (
+                    <Badge variant="secondary" className="text-xs">Set</Badge>
+                  )}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {hasPinSet
+                    ? "Master PIN is required to change the admin password."
+                    : "Set a Master PIN to protect password changes."}
+                </p>
+
+                {hasPinSet && (
+                  <div className="space-y-2">
+                    <Label htmlFor="currentPin">Current PIN</Label>
+                    <Input
+                      id="currentPin"
+                      type="password"
+                      maxLength={6}
+                      value={currentPin}
+                      onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, ''))}
+                      placeholder="Enter current PIN"
+                    />
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <Label htmlFor="newPin">New PIN (4-6 digits)</Label>
+                  <Input
+                    id="newPin"
+                    type="password"
+                    maxLength={6}
+                    value={newPin}
+                    onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
+                    placeholder="Enter new PIN"
+                  />
+                </div>
+
+                <Button
+                  onClick={savePin}
+                  disabled={pinSaving || !newPin}
+                  variant="outline"
+                  className="w-full"
+                >
+                  {pinSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Key className="w-4 h-4" />}
+                  {hasPinSet ? "Change PIN" : "Set PIN"}
+                </Button>
+              </div>
+
+              <Separator className="md:hidden" />
+
+              {/* Change Password Section */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <Lock className="w-4 h-4" />
+                  <Label className="font-medium">Change Password</Label>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Change the admin account password.
+                  {hasPinSet && " Master PIN required."}
+                </p>
+
+                <div className="space-y-2">
+                  <Label htmlFor="currentPassword">Current Password</Label>
+                  <Input
+                    id="currentPassword"
+                    type="password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="Enter current password"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="newPassword">New Password</Label>
+                  <Input
+                    id="newPassword"
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Enter new password"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="confirmPassword">Confirm New Password</Label>
+                  <Input
+                    id="confirmPassword"
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Confirm new password"
+                  />
+                </div>
+
+                {hasPinSet && (
+                  <div className="space-y-2">
+                    <Label htmlFor="masterPin">Master PIN</Label>
+                    <Input
+                      id="masterPin"
+                      type="password"
+                      maxLength={6}
+                      value={masterPin}
+                      onChange={(e) => setMasterPin(e.target.value.replace(/\D/g, ''))}
+                      placeholder="Enter Master PIN"
+                    />
+                  </div>
+                )}
+
+                <Button
+                  onClick={changePassword}
+                  disabled={passwordSaving || !currentPassword || !newPassword || !confirmPassword}
+                  className="w-full"
+                >
+                  {passwordSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+                  Change Password
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>

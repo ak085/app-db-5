@@ -46,7 +46,8 @@ export async function GET() {
       },
       system: {
         retentionDays: systemSettings.retentionDays
-      }
+      },
+      hasPinSet: !!systemSettings.masterPinHash
     })
   } catch (error) {
     console.error('Settings GET error:', error)
