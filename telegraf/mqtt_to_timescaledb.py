@@ -629,6 +629,12 @@ def main():
                 logger.info("MQTT config changed, reconnecting...")
                 mqtt_client.disconnect()
                 mqtt_client.loop_stop()
+
+                # Reset data flow tracking - new config means we need fresh data to confirm connection
+                stats['last_write_time'] = current_time  # Start timeout from now
+                stats['messages_written'] = 0  # Reset counter to detect new data
+                update_connection_status('connecting')
+
                 time.sleep(1)
                 connect_mqtt()
 

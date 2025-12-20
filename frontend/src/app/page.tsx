@@ -88,7 +88,9 @@ export default function Dashboard() {
     )
   }
 
-  const mqttConnected = data?.mqtt.connectionStatus === 'connected'
+  const mqttStatus = data?.mqtt.connectionStatus || 'disconnected'
+  const mqttConnected = mqttStatus === 'connected'
+  const mqttConnecting = mqttStatus === 'connecting'
 
   return (
     <div className="container mx-auto p-6">
@@ -131,14 +133,20 @@ export default function Dashboard() {
               <h3 className="text-sm font-medium text-muted-foreground">MQTT Broker</h3>
               {mqttConnected ? (
                 <Wifi className="w-5 h-5 text-emerald-500" />
+              ) : mqttConnecting ? (
+                <Wifi className="w-5 h-5 text-amber-500 animate-pulse" />
               ) : (
                 <WifiOff className="w-5 h-5 text-red-500" />
               )}
             </div>
             <div className="flex items-center gap-2 mb-2">
-              <span className={`w-3 h-3 rounded-full ${mqttConnected ? 'bg-emerald-500' : 'bg-red-500'}`} />
-              <span className="text-lg font-semibold">
-                {mqttConnected ? 'Connected' : data?.mqtt.connectionStatus || 'Disconnected'}
+              <span className={`w-3 h-3 rounded-full ${
+                mqttConnected ? 'bg-emerald-500' :
+                mqttConnecting ? 'bg-amber-500 animate-pulse' :
+                'bg-red-500'
+              }`} />
+              <span className="text-lg font-semibold capitalize">
+                {mqttStatus}
               </span>
             </div>
             <p className="text-sm text-muted-foreground">
