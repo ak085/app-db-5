@@ -12,12 +12,13 @@
 
 ```bash
 # Clone and deploy
-git clone http://10.0.10.2:30008/ak101/app-db3.git storage-app
+git clone http://10.0.10.2:30008/ak101/app-db-5.git storage-app
 cd storage-app
 docker compose up -d
 
 # Access UI
 # http://<your-ip>:3002
+# Login: admin / admin
 ```
 
 ---
@@ -70,9 +71,10 @@ Perfect for collecting and storing data from BacPipes edge devices, IoT sensors,
 
 | Feature | Description |
 |---------|-------------|
+| **Web Authentication** | Session-based login with Master PIN protection |
 | **MQTT Subscription** | Subscribe to any MQTT broker |
 | **TLS/SSL Support** | Secure connections with certificate verification |
-| **Authentication** | Username/password MQTT authentication |
+| **MQTT Authentication** | Username/password MQTT authentication |
 | **Topic Patterns** | Flexible wildcard topic subscriptions |
 | **Dynamic Schema** | JSONB metadata adapts to any payload structure |
 | **Data Monitoring** | Real-time data table with filtering |
@@ -85,16 +87,21 @@ Perfect for collecting and storing data from BacPipes edge devices, IoT sensors,
 
 ## First-Time Setup
 
-1. **Access Dashboard**: http://your-ip:3002
-2. **Configure MQTT**:
+1. **Login**: http://your-ip:3002/login
+   - Username: `admin`
+   - Password: `admin`
+2. **Set Master PIN** (recommended):
+   - Go to Settings > Security Settings
+   - Set a 4-6 digit Master PIN
+3. **Configure MQTT**:
    - Go to Settings page
    - Enter MQTT broker IP/hostname
    - Configure authentication if needed
    - Enable TLS if required
-3. **Set Topic Patterns**:
+4. **Set Topic Patterns**:
    - Add topic patterns to subscribe (e.g., `bacnet/#`)
    - Save settings
-4. **Verify**:
+5. **Verify**:
    - Check Dashboard for connection status
    - View incoming data on Monitoring page
 
@@ -110,6 +117,16 @@ Perfect for collecting and storing data from BacPipes edge devices, IoT sensors,
 | Restart telegraf | `docker compose restart telegraf` |
 | Rebuild | `docker compose build && docker compose up -d` |
 | Reset (delete data) | `docker compose down -v` |
+
+---
+
+## CLI Recovery Commands
+
+| Command | Description |
+|---------|-------------|
+| `docker exec storage-frontend node scripts/reset-password.js` | Reset password to "admin" |
+| `docker exec storage-frontend node scripts/reset-pin.js` | Remove master PIN |
+| `docker exec storage-frontend node scripts/set-pin.js <pin>` | Set master PIN (4-6 digits) |
 
 ---
 
@@ -231,7 +248,10 @@ storage-app/
 ├── docker-compose.yml          # All services
 ├── frontend/                   # Next.js web app
 │   ├── src/app/               # Pages and API routes
+│   ├── src/lib/               # Auth and session utilities
+│   ├── src/middleware.ts      # Route protection
 │   ├── src/components/ui/     # shadcn/ui components
+│   ├── scripts/               # CLI recovery scripts
 │   ├── prisma/                # Database schema
 │   └── Dockerfile
 ├── telegraf/                   # MQTT to TimescaleDB
@@ -245,7 +265,7 @@ storage-app/
 
 ## Repository
 
-- **Gitea**: http://10.0.10.2:30008/ak101/app-db3.git
+- **Gitea**: http://10.0.10.2:30008/ak101/app-db-5.git
 
 ---
 

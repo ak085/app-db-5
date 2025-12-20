@@ -7,10 +7,11 @@
 **Core Features**:
 - MQTT subscription to any broker
 - TLS/SSL with certificate verification
-- Username/password authentication
+- Username/password MQTT authentication
 - Configurable topic patterns
 - Web-based monitoring and export
 - Dynamic schema with JSONB metadata
+- Session-based authentication with Master PIN protection
 
 ---
 
@@ -21,9 +22,10 @@
 │ Storage App (Docker Compose)                │
 ├─────────────────────────────────────────────┤
 │  Frontend (Next.js 15) - Port 3002          │
+│  ├─ Login (session-based auth)              │
 │  ├─ Dashboard (status)                      │
 │  ├─ Monitoring (data table)                 │
-│  └─ Settings (MQTT config + data mgmt)      │
+│  └─ Settings (MQTT + security + data mgmt)  │
 │                                             │
 │  PostgreSQL 15 - Port 5436                  │
 │  └─ Configuration database                  │
@@ -45,6 +47,7 @@
 ## Technology Stack
 
 - **Frontend**: Next.js 15 + TypeScript + Tailwind CSS + shadcn/ui
+- **Authentication**: iron-session + bcryptjs
 - **Config Database**: PostgreSQL 15 + Prisma
 - **Time-Series Database**: TimescaleDB 15
 - **MQTT Bridge**: Python 3.10 + paho-mqtt
@@ -82,10 +85,16 @@ docker exec -it storage-timescaledb psql -U timescale -d sensor_data
 |------|---------|
 | `telegraf/mqtt_to_timescaledb.py` | MQTT subscription and TimescaleDB write |
 | `frontend/src/app/page.tsx` | Dashboard |
-| `frontend/src/app/settings/page.tsx` | MQTT/TLS config + data management |
+| `frontend/src/app/login/page.tsx` | Login page |
+| `frontend/src/app/settings/page.tsx` | MQTT/TLS + security + data management |
 | `frontend/src/app/monitoring/page.tsx` | Data table view |
+| `frontend/src/middleware.ts` | Route protection (auth) |
+| `frontend/src/lib/auth.ts` | Password hashing utilities |
+| `frontend/src/lib/session.ts` | Session configuration |
+| `frontend/src/app/api/auth/*` | Auth API routes (login, logout, password, pin) |
 | `frontend/src/app/api/export/route.ts` | CSV/JSON export |
 | `frontend/prisma/schema.prisma` | Config database schema |
+| `frontend/scripts/` | CLI recovery scripts |
 | `timescaledb/init/01_init_hypertable.sql` | TimescaleDB schema |
 
 ---
@@ -102,6 +111,7 @@ docker exec -it storage-timescaledb psql -U timescale -d sensor_data
 - `enabled`, `connectionStatus`, `lastConnected`
 
 **SystemSettings**:
+- `adminUsername`, `adminPasswordHash`, `masterPinHash` (auth)
 - `retentionDays`
 
 ### Time-Series Database (TimescaleDB)
@@ -197,11 +207,33 @@ FROM sensor_readings;
 
 ---
 
+## Authentication
+
+### Default Credentials
+- **Username**: admin
+- **Password**: admin
+
+### Features
+- Session-based auth using encrypted cookies (iron-session)
+- Master PIN protects password changes (4-6 digits)
+- Middleware-based route protection
+- 3-hour session expiry
+
+### CLI Recovery Commands
+
+| Command | Description |
+|---------|-------------|
+| `docker exec storage-frontend node scripts/reset-password.js` | Reset password to "admin" |
+| `docker exec storage-frontend node scripts/reset-pin.js` | Remove master PIN |
+| `docker exec storage-frontend node scripts/set-pin.js <pin>` | Set master PIN (4-6 digits) |
+
+---
+
 ## Repository
 
-- **Gitea**: http://10.0.10.2:30008/ak101/app-db3.git
+- **Gitea**: http://10.0.10.2:30008/ak101/app-db-5.git
 - **Branch**: main
 
 ---
 
-**Last Updated**: 2025-12-16
+**Last Updated**: 2025-12-20
