@@ -463,6 +463,15 @@ def connect_mqtt():
     """Connect to MQTT broker with TLS and authentication support"""
     global mqtt_client, mqtt_connected
 
+    # Stop existing client if any to prevent duplicate client ID conflicts
+    if mqtt_client is not None:
+        try:
+            mqtt_client.loop_stop()
+            mqtt_client.disconnect()
+        except:
+            pass
+        mqtt_client = None
+
     if not mqtt_config['broker']:
         logger.warning("MQTT broker not configured, waiting...")
         return False
