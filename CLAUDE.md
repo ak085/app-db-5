@@ -157,6 +157,24 @@ Common patterns:
 - `+/+/+/presentValue` - All point values
 - `building1/#` - Specific building
 
+### Troubleshooting
+
+**Client ID Conflict (connect/disconnect loop)**:
+- **Symptom**: Telegraf logs show rapid "Connected" followed by "Unexpected disconnect" in a loop
+- **Cause**: Another MQTT client is using the same `clientId` on the broker
+- **Fix**: Change the client ID in Settings to a unique value (e.g., `storage-app`)
+- **Note**: Client ID is an MQTT-level identifier, unrelated to TLS - the TLS connection succeeds but MQTT session conflicts
+
+```bash
+# Check for connect/disconnect loop
+docker compose logs --tail=50 telegraf | grep -E "(Connected|disconnect)"
+
+# Fix via database if UI unavailable
+docker exec storage-postgres psql -U storage -d storage_config \
+  -c "UPDATE \"MqttConfig\" SET \"clientId\" = 'storage-app' WHERE id = 1;"
+docker compose restart telegraf
+```
+
 ---
 
 ## Telegraf Hot-Reload
@@ -236,4 +254,4 @@ FROM sensor_readings;
 
 ---
 
-**Last Updated**: 2025-12-20
+**Last Updated**: 2026-01-01
