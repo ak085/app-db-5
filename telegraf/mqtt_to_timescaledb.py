@@ -136,7 +136,19 @@ def update_connection_status(status: str, last_connected: bool = False):
     """Update MQTT connection status in database"""
     global config_conn
     try:
-        cursor = config_conn.cursor()
+        logger.info(f"Updating connection status to: {status}")
+        # Reconnect to config database to ensure thread-safe operation
+        # (callbacks are called from MQTT's background thread)
+        conn = psycopg2.connect(
+            host=CONFIG_DB_HOST,
+            port=CONFIG_DB_PORT,
+            database=CONFIG_DB_NAME,
+            user=CONFIG_DB_USER,
+            password=CONFIG_DB_PASSWORD,
+            connect_timeout=10
+        )
+        conn.autocommit = True
+        cursor = conn.cursor()
         if last_connected:
             cursor.execute('''
                 UPDATE "MqttConfig"
@@ -150,6 +162,8 @@ def update_connection_status(status: str, last_connected: bool = False):
                 WHERE id = 1
             ''', (status,))
         cursor.close()
+        conn.close()
+        logger.info(f"Connection status updated to: {status}")
     except Exception as e:
         logger.error(f"Failed to update connection status: {e}")
 
@@ -330,7 +344,8 @@ def on_connect(client, userdata, flags, reason_code, properties):
     if reason_code == 0:
         mqtt_connected = True
         logger.info(f"Connected to MQTT broker {mqtt_config['broker']}:{mqtt_config['port']}")
-        # Don't update status here - let main loop handle it based on actual data flow
+        # Update status immediately on successful connection
+        update_connection_status('connected', last_connected=True)
 
         # Subscribe to configured topic patterns
         for pattern in mqtt_config['topic_patterns']:
@@ -339,6 +354,7 @@ def on_connect(client, userdata, flags, reason_code, properties):
     else:
         mqtt_connected = False
         logger.error(f"Failed to connect to MQTT broker, code: {reason_code}")
+        update_connection_status('disconnected')
 
 
 def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
@@ -347,8 +363,8 @@ def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
     mqtt_connected = False
     if reason_code != 0:
         logger.warning(f"Unexpected disconnect from MQTT broker, code: {reason_code}")
-    # Don't update status here - let main loop handle it based on actual data flow
-    # This prevents rapid connect/disconnect cycles from setting wrong status
+    # Update status on disconnect
+    update_connection_status('disconnected')
 
 
 def on_message(client, userdata, msg):
@@ -652,16 +668,12 @@ def main():
             logger.info(f"Connecting to MQTT broker {mqtt_config['broker']}:{mqtt_config['port']}...")
             connect_mqtt()
 
-        # Update connection status based on actual data flow
-        # This is more reliable than callbacks during rapid connect/disconnect cycles
-        if mqtt_config['enabled'] and mqtt_config['broker']:
+        # Update lastConnected timestamp when data is actively flowing
+        if mqtt_config['enabled'] and mqtt_config['broker'] and mqtt_connected:
             data_age = current_time - stats['last_write_time']
             if stats['messages_written'] > 0 and data_age < 120:
-                # Data flowing - ensure status shows connected
+                # Data flowing - update lastConnected timestamp
                 update_connection_status('connected', last_connected=True)
-            elif data_age > 120:
-                # No data for 2+ minutes - mark as disconnected
-                update_connection_status('disconnected')
 
         # Sleep before next iteration
         time.sleep(5)
